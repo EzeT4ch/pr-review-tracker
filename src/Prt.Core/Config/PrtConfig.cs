@@ -36,6 +36,8 @@ public sealed class PrtConfig
             ResumeArgs = custom.ResumeArgs ?? defaults.ResumeArgs,
             ResumeWithPromptArgs = custom.ResumeWithPromptArgs ?? defaults.ResumeWithPromptArgs,
             AskArgs = custom.AskArgs ?? defaults.AskArgs,
+            ReviewNewArgs = custom.ReviewNewArgs ?? defaults.ReviewNewArgs,
+            ReviewResumeArgs = custom.ReviewResumeArgs ?? defaults.ReviewResumeArgs,
         };
     }
 
@@ -70,7 +72,8 @@ public static class AgentNames
 
 /// <summary>
 /// Command line templates for an agent CLI. Arguments may contain the placeholders
-/// <c>{sessionId}</c> and <c>{prompt}</c>. Agent CLIs change often, so every template
+/// <c>{sessionId}</c>, <c>{prompt}</c> and, for the panel templates, <c>{contextDir}</c> (the folder with the
+/// diff and context files the reviewer must be able to read). Agent CLIs change often, so every template
 /// can be overridden in the config file.
 /// </summary>
 public sealed class AgentSettings
@@ -81,6 +84,14 @@ public sealed class AgentSettings
     public List<string>? ResumeWithPromptArgs { get; set; }
     public List<string>? AskArgs { get; set; }
 
+    /// <summary>Headless, read-only run that starts a panel reviewer session.</summary>
+    public List<string>? ReviewNewArgs { get; set; }
+
+    /// <summary>Headless, read-only run that continues a panel reviewer session.</summary>
+    public List<string>? ReviewResumeArgs { get; set; }
+
+    private const string ClaudeReviewTools = "Read,Grep,Glob,Bash(git diff:*),Bash(git log:*),Bash(git show:*)";
+
     public static AgentSettings DefaultFor(string name) => name.ToLowerInvariant() switch
     {
         AgentNames.Claude => new()
@@ -90,6 +101,11 @@ public sealed class AgentSettings
             ResumeArgs = ["--resume", "{sessionId}"],
             ResumeWithPromptArgs = ["--resume", "{sessionId}", "{prompt}"],
             AskArgs = ["-p", "--resume", "{sessionId}", "--output-format", "json", "{prompt}"],
+            // --allowedTools and --add-dir take several values: a single-valued flag must follow them.
+            ReviewNewArgs = ["-p", "--allowedTools", ClaudeReviewTools, "--add-dir", "{contextDir}",
+                "--session-id", "{sessionId}", "--output-format", "json", "{prompt}"],
+            ReviewResumeArgs = ["-p", "--allowedTools", ClaudeReviewTools, "--add-dir", "{contextDir}",
+                "--resume", "{sessionId}", "--output-format", "json", "{prompt}"],
         },
         AgentNames.Codex => new()
         {
@@ -98,6 +114,8 @@ public sealed class AgentSettings
             ResumeArgs = ["resume", "{sessionId}"],
             ResumeWithPromptArgs = ["resume", "{sessionId}", "{prompt}"],
             AskArgs = ["exec", "resume", "{sessionId}", "--json", "{prompt}"],
+            ReviewNewArgs = ["exec", "--json", "--sandbox", "read-only", "--skip-git-repo-check", "{prompt}"],
+            ReviewResumeArgs = ["exec", "resume", "{sessionId}", "--json", "{prompt}"],
         },
         AgentNames.Opencode => new()
         {
@@ -106,6 +124,8 @@ public sealed class AgentSettings
             ResumeArgs = ["--session", "{sessionId}"],
             ResumeWithPromptArgs = ["--session", "{sessionId}", "--prompt", "{prompt}"],
             AskArgs = ["run", "--session", "{sessionId}", "--format", "json", "{prompt}"],
+            ReviewNewArgs = ["run", "--format", "json", "{prompt}"],
+            ReviewResumeArgs = ["run", "--session", "{sessionId}", "--format", "json", "{prompt}"],
         },
         _ => throw new ArgumentException(
             $"Agente desconocido '{name}'. Opciones: {string.Join(", ", AgentNames.All)}."),

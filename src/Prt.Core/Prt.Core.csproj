@@ -5,6 +5,11 @@
   </ItemGroup>
 
   <ItemGroup>
+    <!-- Built-in review standards and reviewers; `prt reviewers init` copies them into a project. -->
+    <EmbeddedResource Include="Panel/Defaults/**/*.md" LogicalName="defaults/%(RecursiveDir)%(Filename)%(Extension)" />
+  </ItemGroup>
+
+  <ItemGroup>
     <InternalsVisibleTo Include="Prt.Core.Tests" />
   </ItemGroup>
 

@@ -17,9 +17,17 @@ public interface IAgentAdapter
     /// <summary>Sends one message to the session headless and returns the agent's final answer.</summary>
     Task<string> AskAsync(string sessionId, string cwd, string prompt, CancellationToken ct = default);
 
+    /// <summary>
+    /// Runs a panel reviewer headless and read-only: starts a session when <paramref name="sessionId"/> is null,
+    /// otherwise continues it. Returns the session id (null if the agent did not report it) and the answer.
+    /// </summary>
+    Task<HeadlessResult> RunReviewAsync(string? sessionId, string prompt, string cwd, string contextDir, CancellationToken ct = default);
+
     /// <summary>Command a human can paste to reopen the session without prt.</summary>
     string ResumeCommand(string sessionId);
 }
+
+public sealed record HeadlessResult(string? SessionId, string Answer);
 
 public sealed class AgentException(string message) : Exception(message);
 
@@ -57,9 +65,20 @@ public abstract class AgentAdapterBase(AgentSettings settings, IProcessRunner ru
         return Runner.RunInteractiveAsync(Command, Expand(template, sessionId, prompt), cwd, ct);
     }
 
-    public async Task<string> AskAsync(string sessionId, string cwd, string prompt, CancellationToken ct = default)
+    public async Task<string> AskAsync(string sessionId, string cwd, string prompt, CancellationToken ct = default) =>
+        (await RunHeadlessAsync(Expand(Settings.AskArgs!, sessionId, prompt), cwd, ct)).Answer;
+
+    public async Task<HeadlessResult> RunReviewAsync(string? sessionId, string prompt, string cwd, string contextDir, CancellationToken ct = default)
     {
-        var result = await Runner.RunCapturedAsync(Command, Expand(Settings.AskArgs!, sessionId, prompt), cwd, ct);
+        var id = sessionId ?? PresetSessionId();
+        var template = sessionId is null ? Settings.ReviewNewArgs! : Settings.ReviewResumeArgs!;
+        var (answer, stdout) = await RunHeadlessAsync(Expand(template, id, prompt, contextDir), cwd, ct);
+        return new HeadlessResult(id ?? ExtractSessionId(stdout), answer);
+    }
+
+    private async Task<(string Answer, string StdOut)> RunHeadlessAsync(List<string> args, string cwd, CancellationToken ct)
+    {
+        var result = await Runner.RunCapturedAsync(Command, args, cwd, ct);
         if (result.ExitCode != 0)
         {
             var detail = string.IsNullOrWhiteSpace(result.StdErr) ? result.StdOut : result.StdErr;
@@ -69,7 +88,7 @@ public abstract class AgentAdapterBase(AgentSettings settings, IProcessRunner ru
         var answer = ParseAnswer(result.StdOut).Trim();
         if (answer.Length == 0)
             throw new AgentException($"{Name} no devolvió texto.");
-        return answer;
+        return (answer, result.StdOut);
     }
 
     public string ResumeCommand(string sessionId) =>
@@ -86,14 +105,17 @@ public abstract class AgentAdapterBase(AgentSettings settings, IProcessRunner ru
     /// <summary>Extracts the final answer from the headless output.</summary>
     protected abstract string ParseAnswer(string stdout);
 
-    internal static List<string> Expand(IEnumerable<string> template, string? sessionId, string? prompt)
+    /// <summary>Session id reported in the headless output of a new session.</summary>
+    protected virtual string? ExtractSessionId(string stdout) => null;
+
+    internal static List<string> Expand(IEnumerable<string> template, string? sessionId, string? prompt, string? contextDir = null)
     {
         var args = new List<string>();
         foreach (var arg in template)
         {
             if (arg == "{prompt}" && prompt is null)
                 continue;
-            args.Add(arg.Replace("{sessionId}", sessionId ?? "").Replace("{prompt}", prompt ?? ""));
+            args.Add(arg.Replace("{sessionId}", sessionId ?? "").Replace("{contextDir}", contextDir ?? "").Replace("{prompt}", prompt ?? ""));
         }
         return args;
     }
@@ -201,6 +223,21 @@ public sealed class CodexAdapter(AgentSettings settings, IProcessRunner runner, 
         return last ?? stdout;
     }
 
+    // New format: {"type":"thread.started","thread_id":..}; legacy: {"msg":{"type":"session_configured","session_id":..}}
+    protected override string? ExtractSessionId(string stdout)
+    {
+        foreach (var json in JsonLines(stdout))
+        {
+            if (Str(json, "type") == "thread.started" && Str(json, "thread_id") is { Length: > 0 } thread)
+                return thread;
+            if (Str(json, "msg", "type") == "session_configured" && Str(json, "msg", "session_id") is { Length: > 0 } session)
+                return session;
+            if (Str(json, "type") == "session_meta" && Str(json, "payload", "id") is { Length: > 0 } meta)
+                return meta;
+        }
+        return null;
+    }
+
     private IEnumerable<string> RolloutFiles() =>
         Directory.Exists(_sessionsDir)
             ? Directory.EnumerateFiles(_sessionsDir, "rollout-*.jsonl", SearchOption.AllDirectories)
@@ -272,6 +309,10 @@ public sealed class OpencodeAdapter(AgentSettings settings, IProcessRunner runne
         }
         return last ?? stdout;
     }
+
+    // Every event of `opencode run --format json` carries the session id.
+    protected override string? ExtractSessionId(string stdout) =>
+        JsonLines(stdout).Select(j => Str(j, "sessionID") ?? Str(j, "part", "sessionID")).FirstOrDefault(id => !string.IsNullOrEmpty(id));
 
     private async Task<List<(string Id, double Updated)>> ListSessionsAsync(string cwd, CancellationToken ct)
     {

@@ -7,11 +7,15 @@ using Prt.Core.Storage;
 
 namespace Prt.Core.Review;
 
-/// <summary>Terminal interactions the review flow needs; implemented with Spectre.Console in the CLI.</summary>
-public interface IReviewUi
+public interface IStatusUi
 {
     void Info(string message);
     void Warn(string message);
+}
+
+/// <summary>Terminal interactions the review flow needs; implemented with Spectre.Console in the CLI.</summary>
+public interface IReviewUi : IStatusUi
+{
     bool Confirm(string question, bool defaultValue);
 
     /// <summary>Asks for a session id when it could not be detected automatically.</summary>
@@ -21,7 +25,14 @@ public interface IReviewUi
     string? AskNote();
 }
 
-public sealed record ReviewOptions(string Agent, bool ForceNewSession = false, bool Summary = true, bool AskNote = true, string? ExtraPrompt = null);
+/// <param name="Reviewer">Panel reviewer whose session to reopen; null for the interactive review session.</param>
+public sealed record ReviewOptions(
+    string Agent,
+    bool ForceNewSession = false,
+    bool Summary = true,
+    bool AskNote = true,
+    string? ExtraPrompt = null,
+    string? Reviewer = null);
 
 public sealed record ReviewOutcome(PullRequest Pr, ReviewSession Session, Round Round, Memo? Summary, Memo? Note, string? NotePath);
 
@@ -35,6 +46,7 @@ public sealed class ReviewService(
     TimeProvider? clock = null)
 {
     private readonly TimeProvider _clock = clock ?? TimeProvider.System;
+    private readonly PullRequestSync _sync = new(store, bitbucket, ui);
 
     public async Task<ReviewOutcome> ReviewAsync(PrRef prRef, ReviewOptions options, CancellationToken ct = default)
     {
@@ -43,7 +55,10 @@ public sealed class ReviewService(
         var head = commits.FirstOrDefault()?.Hash ?? pr.LastReviewedCommit;
         var cwd = config.RepoPathFor(prRef.RepoKey) ?? Directory.GetCurrentDirectory();
 
-        var session = options.ForceNewSession ? null : store.GetDefaultSession(pr.Id, options.Agent);
+        var session = options.ForceNewSession ? null : store.GetDefaultSession(pr.Id, options.Agent, options.Reviewer);
+        if (session is null && options.Reviewer is not null)
+            throw new ArgumentException(
+                $"No hay sesión de {options.Agent} para el revisor '{options.Reviewer}' en {pr.Key}. Corré `prt analyze {pr.Key}` primero.");
         var startedAt = _clock.GetUtcNow();
         string? prompt;
         string kind;
@@ -111,57 +126,12 @@ public sealed class ReviewService(
     }
 
     /// <summary>Fetches PR metadata from Bitbucket and stores it; falls back to the stored copy when offline.</summary>
-    public async Task<(PullRequest Pr, IReadOnlyList<PrCommit> Commits)> RefreshAsync(PrRef prRef, CancellationToken ct = default)
-    {
-        PullRequestInfo info;
-        try
-        {
-            info = await bitbucket.GetPullRequestAsync(prRef, ct);
-        }
-        catch (Exception ex) when (ex is BitbucketException or HttpRequestException && store.FindPullRequest(prRef) is not null)
-        {
-            ui.Warn($"No se pudo consultar Bitbucket ({ex.Message}); uso los datos guardados.");
-            return (store.FindPullRequest(prRef)!, []);
-        }
+    public Task<(PullRequest Pr, IReadOnlyList<PrCommit> Commits)> RefreshAsync(PrRef prRef, CancellationToken ct = default) =>
+        _sync.RefreshAsync(prRef, ct);
 
-        IReadOnlyList<PrCommit> commits;
-        try
-        {
-            commits = await bitbucket.GetCommitsAsync(prRef, ct);
-        }
-        catch (Exception ex) when (ex is BitbucketException or HttpRequestException)
-        {
-            ui.Warn($"No se pudieron leer los commits del PR: {ex.Message}");
-            commits = info.HeadCommit is null ? [] : [new PrCommit(info.HeadCommit, "", null)];
-        }
+    public string? Export(long prId) => exporter?.Export(store, prId);
 
-        var pr = store.UpsertPullRequest(new PullRequest
-        {
-            Workspace = prRef.Workspace,
-            Repo = prRef.Repo,
-            Number = prRef.Number,
-            Title = info.Title,
-            Author = info.Author,
-            SourceBranch = info.SourceBranch,
-            DestinationBranch = info.DestinationBranch,
-            State = info.State,
-            Url = info.Url,
-            Description = info.Description,
-        });
-        return (pr, commits);
-    }
-
-    public string? Export(long prId)
-    {
-        if (exporter is null)
-            return null;
-        var path = exporter.ExportPr(store.GetHistory(prId));
-        ExportIndex();
-        return path;
-    }
-
-    public void ExportIndex() =>
-        exporter?.ExportIndex(store.ListPullRequests().Select(p => store.GetHistory(p.Id)).ToList());
+    public void ExportIndex() => exporter?.ExportIndex(store);
 
     private string? ReReviewPrompt(PullRequest pr, IReadOnlyList<PrCommit> commits)
     {

@@ -3,6 +3,7 @@ using Prt.Core.Bitbucket;
 using Prt.Core.Config;
 using Prt.Core.Domain;
 using Prt.Core.Export;
+using Prt.Core.Panel;
 using Prt.Core.Review;
 using Prt.Core.Storage;
 using Spectre.Console;
@@ -25,7 +26,10 @@ internal sealed class App : IDisposable
 
     public SqliteStore Store => _store ??= new SqliteStore(PrtPaths.DatabaseFile);
 
-    public IPullRequestSource Bitbucket => new BitbucketClient(_http ??= new HttpClient { Timeout = TimeSpan.FromSeconds(30) }, Config.Bitbucket);
+    // Redirects are followed by BitbucketClient itself, so the Authorization header is kept.
+    public IPullRequestSource Bitbucket => new BitbucketClient(
+        _http ??= new HttpClient(new HttpClientHandler { AllowAutoRedirect = false }) { Timeout = TimeSpan.FromSeconds(60) },
+        Config.Bitbucket);
 
     public IAgentAdapter Agent(string name) => AgentFactory.Create(name, Config, Runner);
 
@@ -35,6 +39,8 @@ internal sealed class App : IDisposable
             : new ObsidianExporter(Config.VaultPath, Config.VaultFolder, ResumeCommand);
 
     public ReviewService Review => new(Config, Store, Bitbucket, Agent, Exporter, Ui);
+
+    public PanelService Panel => new(Config, Store, Bitbucket, Agent, Exporter, Ui, Path.Combine(PrtPaths.DataDir, "runs"));
 
     public void WarnIfNoVault()
     {

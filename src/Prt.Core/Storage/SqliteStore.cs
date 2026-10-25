@@ -93,37 +93,44 @@ public sealed class SqliteStore : IDisposable
 
     // ---- Sessions ------------------------------------------------------------------------
 
-    /// <summary>Adds a session and makes it the default one for its agent on that PR.</summary>
-    public ReviewSession AddSession(long prId, string agent, string agentSessionId, string cwd, string? label = null)
+    /// <summary>
+    /// Adds a session and makes it the default one for its agent on that PR. <paramref name="reviewer"/>
+    /// is the panel reviewer it belongs to; null for the interactive review session.
+    /// </summary>
+    public ReviewSession AddSession(long prId, string agent, string agentSessionId, string cwd, string? label = null, string? reviewer = null)
     {
         var now = Format(Now);
         InTransaction(() =>
         {
-            Execute("UPDATE sessions SET is_default = 0 WHERE pr_id = $pr AND agent = $agent",
-                ("$pr", prId), ("$agent", agent));
+            Execute("UPDATE sessions SET is_default = 0 WHERE pr_id = $pr AND agent = $agent AND reviewer IS $reviewer",
+                ("$pr", prId), ("$agent", agent), ("$reviewer", reviewer));
             Execute(
                 """
-                INSERT INTO sessions (pr_id, agent, agent_session_id, cwd, label, is_default, started_at, last_used_at)
-                VALUES ($pr, $agent, $sid, $cwd, $label, 1, $now, $now)
+                INSERT INTO sessions (pr_id, agent, agent_session_id, cwd, label, reviewer, is_default, started_at, last_used_at)
+                VALUES ($pr, $agent, $sid, $cwd, $label, $reviewer, 1, $now, $now)
                 ON CONFLICT (agent, agent_session_id) DO UPDATE SET
-                    pr_id = excluded.pr_id, cwd = excluded.cwd, is_default = 1,
+                    pr_id = excluded.pr_id, cwd = excluded.cwd, is_default = 1, reviewer = excluded.reviewer,
                     label = COALESCE(excluded.label, sessions.label), last_used_at = excluded.last_used_at
                 """,
-                ("$pr", prId), ("$agent", agent), ("$sid", agentSessionId), ("$cwd", cwd), ("$label", label), ("$now", now));
+                ("$pr", prId), ("$agent", agent), ("$sid", agentSessionId), ("$cwd", cwd), ("$label", label),
+                ("$reviewer", reviewer), ("$now", now));
         });
 
         return Query(SessionSelect + " WHERE agent = $agent AND agent_session_id = $sid", ReadSession,
             ("$agent", agent), ("$sid", agentSessionId)).Single();
     }
 
-    public ReviewSession? GetDefaultSession(long prId, string agent) =>
-        Query(SessionSelect + " WHERE pr_id = $pr AND agent = $agent ORDER BY is_default DESC, last_used_at DESC LIMIT 1",
-            ReadSession, ("$pr", prId), ("$agent", agent)).FirstOrDefault();
+    public ReviewSession? GetDefaultSession(long prId, string agent, string? reviewer = null) =>
+        Query(SessionSelect + " WHERE pr_id = $pr AND agent = $agent AND reviewer IS $reviewer ORDER BY is_default DESC, last_used_at DESC LIMIT 1",
+            ReadSession, ("$pr", prId), ("$agent", agent), ("$reviewer", reviewer)).FirstOrDefault();
 
-    /// <summary>The session used most recently on the PR, any agent.</summary>
-    public ReviewSession? GetLatestSession(long prId) =>
-        Query(SessionSelect + " WHERE pr_id = $pr ORDER BY last_used_at DESC LIMIT 1", ReadSession, ("$pr", prId))
-            .FirstOrDefault();
+    /// <summary>The session used most recently on the PR by the interactive review (or by a reviewer), any agent.</summary>
+    public ReviewSession? GetLatestSession(long prId, string? reviewer = null) =>
+        Query(SessionSelect + " WHERE pr_id = $pr AND reviewer IS $reviewer ORDER BY last_used_at DESC LIMIT 1", ReadSession,
+            ("$pr", prId), ("$reviewer", reviewer)).FirstOrDefault();
+
+    public ReviewSession? GetSession(long id) =>
+        Query(SessionSelect + " WHERE id = $id", ReadSession, ("$id", id)).FirstOrDefault();
 
     public IReadOnlyList<ReviewSession> ListSessions(long prId) =>
         Query(SessionSelect + " WHERE pr_id = $pr ORDER BY started_at", ReadSession, ("$pr", prId));
@@ -170,6 +177,51 @@ public sealed class SqliteStore : IDisposable
     public IReadOnlyList<Memo> ListMemos(long prId) =>
         Query(MemoSelect + " WHERE pr_id = $pr ORDER BY created_at, id", ReadMemo, ("$pr", prId));
 
+    // ---- Panel runs ----------------------------------------------------------------------
+
+    public ReviewRun StartRun(long prId, string? headCommit, DateTimeOffset? startedAt = null)
+    {
+        var id = Scalar<long>(
+            "INSERT INTO review_runs (pr_id, started_at, head_commit) VALUES ($pr, $start, $head); SELECT last_insert_rowid();",
+            ("$pr", prId), ("$start", Format(startedAt ?? Now)), ("$head", headCommit));
+        return Query(RunSelect + " WHERE id = $id", ReadRun, ("$id", id)).Single();
+    }
+
+    public void FinishRun(long runId, string? verdict) =>
+        Execute("UPDATE review_runs SET ended_at = $end, verdict = $verdict WHERE id = $id",
+            ("$end", Format(Now)), ("$verdict", verdict), ("$id", runId));
+
+    public ReviewerResult AddResult(ReviewerResult result)
+    {
+        result.Id = Scalar<long>(
+            """
+            INSERT INTO reviewer_results (run_id, reviewer, agent, session_id, status, report_json, raw_output, error, started_at, ended_at)
+            VALUES ($run, $reviewer, $agent, $session, $status, $report, $raw, $error, $start, $end);
+            SELECT last_insert_rowid();
+            """,
+            ("$run", result.RunId), ("$reviewer", result.Reviewer), ("$agent", result.Agent), ("$session", result.SessionId),
+            ("$status", result.Status), ("$report", result.ReportJson), ("$raw", result.RawOutput), ("$error", result.Error),
+            ("$start", Format(result.StartedAt)), ("$end", Format(result.EndedAt)));
+        return result;
+    }
+
+    public IReadOnlyList<RunHistory> ListRuns(long prId)
+    {
+        var runs = Query(RunSelect + " WHERE pr_id = $pr ORDER BY started_at, id", ReadRun, ("$pr", prId));
+        var results = Query(
+            ResultSelect + " WHERE run_id IN (SELECT id FROM review_runs WHERE pr_id = $pr) ORDER BY id",
+            ReadResult, ("$pr", prId)).ToLookup(r => r.RunId);
+        return runs.Select(r => new RunHistory(r, results[r.Id].ToList())).ToList();
+    }
+
+    /// <summary>The last valid report of a reviewer on a PR, to carry its findings into the next run.</summary>
+    public ReviewerResult? LatestOkResult(long prId, string reviewer) =>
+        Query(ResultSelect + """
+             WHERE reviewer = $reviewer AND status = 'ok'
+               AND run_id IN (SELECT id FROM review_runs WHERE pr_id = $pr)
+             ORDER BY id DESC LIMIT 1
+            """, ReadResult, ("$pr", prId), ("$reviewer", reviewer)).FirstOrDefault();
+
     // ---- Tags ----------------------------------------------------------------------------
 
     public void AddTags(long prId, IEnumerable<string> tags)
@@ -193,7 +245,7 @@ public sealed class SqliteStore : IDisposable
     public PrHistory GetHistory(long prId)
     {
         var pr = GetPullRequest(prId) ?? throw new InvalidOperationException($"PR {prId} no existe.");
-        return new PrHistory(pr, ListSessions(prId), ListRounds(prId), ListMemos(prId), ListTags(prId));
+        return new PrHistory(pr, ListSessions(prId), ListRounds(prId), ListMemos(prId), ListTags(prId), ListRuns(prId));
     }
 
     // ---- Mapping -------------------------------------------------------------------------
@@ -203,7 +255,8 @@ public sealed class SqliteStore : IDisposable
         COALESCE(
             (SELECT MAX(x) FROM (
                 SELECT MAX(COALESCE(r.ended_at, r.started_at)) AS x FROM rounds r JOIN sessions s ON s.id = r.session_id WHERE s.pr_id = p.id
-                UNION ALL SELECT MAX(m.created_at) FROM memos m WHERE m.pr_id = p.id)),
+                UNION ALL SELECT MAX(m.created_at) FROM memos m WHERE m.pr_id = p.id
+                UNION ALL SELECT MAX(COALESCE(v.ended_at, v.started_at)) FROM review_runs v WHERE v.pr_id = p.id)),
             p.updated_at)
         """;
 
@@ -234,7 +287,7 @@ public sealed class SqliteStore : IDisposable
     };
 
     private const string SessionSelect =
-        "SELECT id, pr_id, agent, agent_session_id, cwd, label, is_default, started_at, last_used_at FROM sessions";
+        "SELECT id, pr_id, agent, agent_session_id, cwd, label, is_default, started_at, last_used_at, reviewer FROM sessions";
 
     private static ReviewSession ReadSession(SqliteDataReader r) => new()
     {
@@ -247,6 +300,37 @@ public sealed class SqliteStore : IDisposable
         IsDefault = r.GetInt64(6) != 0,
         StartedAt = Parse(r.GetString(7)),
         LastUsedAt = Parse(r.GetString(8)),
+        Reviewer = r.IsDBNull(9) ? null : r.GetString(9),
+    };
+
+    private const string RunSelect = "SELECT id, pr_id, started_at, ended_at, head_commit, verdict FROM review_runs";
+
+    private static ReviewRun ReadRun(SqliteDataReader r) => new()
+    {
+        Id = r.GetInt64(0),
+        PrId = r.GetInt64(1),
+        StartedAt = Parse(r.GetString(2)),
+        EndedAt = r.IsDBNull(3) ? null : Parse(r.GetString(3)),
+        HeadCommit = r.IsDBNull(4) ? null : r.GetString(4),
+        Verdict = r.IsDBNull(5) ? null : r.GetString(5),
+    };
+
+    private const string ResultSelect =
+        "SELECT id, run_id, reviewer, agent, session_id, status, report_json, raw_output, error, started_at, ended_at FROM reviewer_results";
+
+    private static ReviewerResult ReadResult(SqliteDataReader r) => new()
+    {
+        Id = r.GetInt64(0),
+        RunId = r.GetInt64(1),
+        Reviewer = r.GetString(2),
+        Agent = r.GetString(3),
+        SessionId = r.IsDBNull(4) ? null : r.GetInt64(4),
+        Status = r.GetString(5),
+        ReportJson = r.IsDBNull(6) ? null : r.GetString(6),
+        RawOutput = r.IsDBNull(7) ? null : r.GetString(7),
+        Error = r.IsDBNull(8) ? null : r.GetString(8),
+        StartedAt = Parse(r.GetString(9)),
+        EndedAt = Parse(r.GetString(10)),
     };
 
     private const string RoundSelect =

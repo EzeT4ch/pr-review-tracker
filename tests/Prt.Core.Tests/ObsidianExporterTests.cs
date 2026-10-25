@@ -46,7 +46,8 @@ public class ObsidianExporterTests
         Assert.Contains("    resume: \"claude --resume uuid-1\"\n", text);
         Assert.Contains("tags:\n  - \"pr-review\"\n  - \"pagos\"\n", text);
         Assert.Contains("last_review: \"2026-03-11T14:00\"", text);
-        Assert.Contains("| claude ⭐ | `uuid-1` |", text);
+        Assert.Contains("| revisión | claude ⭐ | `uuid-1` |", text);
+        Assert.Contains("_Sin análisis todavía.", text);
         Assert.Contains("## Pendientes\n\n_Según el último resumen (2026-03-10 14:31)._\n\n- [ ] test de timeout\n", text);
         Assert.Contains("### 2026-03-10 14:00 — claude · nueva sesión · `0123456789ab`", text);
         Assert.Contains("> [!abstract] Resumen del agente · 14:31\n> #### Hallazgos\n", text);
@@ -100,7 +101,7 @@ public class ObsidianExporterTests
         var path = exporter.ExportIndex([History(title: "a | b")]);
 
         var text = File.ReadAllText(path);
-        Assert.Contains("| [[PR Reviews/acme/api/PR-42 - a b\\|acme/api#42]] | a \\| b | Ana | APROBAR | 2026-03-11 14:00 | 1 |", text);
+        Assert.Contains("| [[PR Reviews/acme/api/PR-42 - a b\\|acme/api#42]] | a \\| b | Ana | APROBAR |  | 2026-03-11 14:00 | 1 |", text);
         Assert.Contains("```dataview", text);
     }
 

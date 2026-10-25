@@ -30,6 +30,9 @@ public interface IPullRequestSource
 
     /// <summary>PR commits, newest first.</summary>
     Task<IReadOnlyList<PrCommit>> GetCommitsAsync(PrRef prRef, CancellationToken ct = default);
+
+    /// <summary>Unified diff of the PR (source against the merge base with the destination).</summary>
+    Task<string> GetDiffAsync(PrRef prRef, CancellationToken ct = default);
 }
 
 public sealed class BitbucketException(string message, HttpStatusCode? status = null) : Exception(message)
@@ -41,6 +44,7 @@ public sealed class BitbucketException(string message, HttpStatusCode? status = 
 public sealed class BitbucketClient : IPullRequestSource
 {
     private const int MaxCommitPages = 10;
+    private const int MaxRedirects = 5;
     private readonly HttpClient _http;
     private readonly string _baseUrl;
 
@@ -96,28 +100,63 @@ public sealed class BitbucketClient : IPullRequestSource
         return commits;
     }
 
+    public async Task<string> GetDiffAsync(PrRef prRef, CancellationToken ct = default)
+    {
+        using var response = await GetAsync($"{RepoUrl(prRef)}/pullrequests/{prRef.Number}/diff", ct);
+        return await response.Content.ReadAsStringAsync(ct);
+    }
+
     private string RepoUrl(PrRef prRef) =>
         $"{_baseUrl}/repositories/{Uri.EscapeDataString(prRef.Workspace)}/{Uri.EscapeDataString(prRef.Repo)}";
 
     private async Task<JsonDocument> GetJsonAsync(string url, CancellationToken ct)
     {
-        using var response = await _http.GetAsync(url, ct);
-        if (!response.IsSuccessStatusCode)
-        {
-            var hint = response.StatusCode switch
-            {
-                HttpStatusCode.Unauthorized => " Revisá usuario/API token (prt init o PRT_BB_USER/PRT_BB_TOKEN).",
-                HttpStatusCode.Forbidden => " El token no tiene permiso de lectura de pull requests sobre ese repo.",
-                HttpStatusCode.NotFound => " El PR no existe o el repo es privado y faltan credenciales.",
-                _ => "",
-            };
-            throw new BitbucketException(
-                $"Bitbucket respondió {(int)response.StatusCode} {response.ReasonPhrase} para {url}.{hint}",
-                response.StatusCode);
-        }
-
+        using var response = await GetAsync(url, ct);
         await using var stream = await response.Content.ReadAsStreamAsync(ct);
         return await JsonDocument.ParseAsync(stream, cancellationToken: ct);
+    }
+
+    /// <summary>
+    /// GET following redirects by hand: HttpClient drops the Authorization header when it follows them,
+    /// and Bitbucket redirects diff requests. Use an HttpClient whose handler does not auto-redirect.
+    /// </summary>
+    private async Task<HttpResponseMessage> GetAsync(string url, CancellationToken ct)
+    {
+        var current = new Uri(url);
+        for (var hop = 0; ; hop++)
+        {
+            var response = await _http.GetAsync(current, ct);
+            if (IsRedirect(response.StatusCode) && response.Headers.Location is { } location && hop < MaxRedirects)
+            {
+                response.Dispose();
+                current = location.IsAbsoluteUri ? location : new Uri(current, location);
+                continue;
+            }
+
+            if (response.IsSuccessStatusCode)
+                return response;
+
+            using (response)
+                throw Failure(response, current.ToString());
+        }
+    }
+
+    private static bool IsRedirect(HttpStatusCode status) =>
+        status is HttpStatusCode.MovedPermanently or HttpStatusCode.Found or HttpStatusCode.SeeOther
+            or HttpStatusCode.TemporaryRedirect or HttpStatusCode.PermanentRedirect;
+
+    private static BitbucketException Failure(HttpResponseMessage response, string url)
+    {
+        var hint = response.StatusCode switch
+        {
+            HttpStatusCode.Unauthorized => " Revisá usuario/API token (prt init o PRT_BB_USER/PRT_BB_TOKEN).",
+            HttpStatusCode.Forbidden => " El token no tiene permiso de lectura de pull requests sobre ese repo.",
+            HttpStatusCode.NotFound => " El PR no existe o el repo es privado y faltan credenciales.",
+            _ => "",
+        };
+        return new BitbucketException(
+            $"Bitbucket respondió {(int)response.StatusCode} {response.ReasonPhrase} para {url}.{hint}",
+            response.StatusCode);
     }
 
     private static string Str(JsonElement element, params string[] path)

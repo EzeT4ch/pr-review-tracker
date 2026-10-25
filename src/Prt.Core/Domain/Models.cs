@@ -54,6 +54,10 @@ public sealed class ReviewSession
     public required string AgentSessionId { get; set; }
     public string Cwd { get; set; } = "";
     public string? Label { get; set; }
+
+    /// <summary>Panel reviewer this session belongs to; null for the interactive review session.</summary>
+    public string? Reviewer { get; set; }
+
     public bool IsDefault { get; set; }
     public DateTimeOffset StartedAt { get; set; }
     public DateTimeOffset LastUsedAt { get; set; }
@@ -80,10 +84,61 @@ public sealed class Memo
     public DateTimeOffset CreatedAt { get; set; }
 }
 
+public static class ResultStatus
+{
+    /// <summary>The agent answered with a valid report.</summary>
+    public const string Ok = "ok";
+
+    /// <summary>The agent answered, but not in the standard format.</summary>
+    public const string Invalid = "invalid";
+
+    /// <summary>The agent could not be run or failed.</summary>
+    public const string Failed = "failed";
+}
+
+/// <summary>One execution of the reviewer panel over a PR.</summary>
+public sealed class ReviewRun
+{
+    public long Id { get; set; }
+    public long PrId { get; set; }
+    public DateTimeOffset StartedAt { get; set; }
+    public DateTimeOffset? EndedAt { get; set; }
+    public string? HeadCommit { get; set; }
+    public string? Verdict { get; set; }
+}
+
+/// <summary>What one reviewer of a run produced.</summary>
+public sealed class ReviewerResult
+{
+    public long Id { get; set; }
+    public long RunId { get; set; }
+    public required string Reviewer { get; set; }
+    public required string Agent { get; set; }
+    public long? SessionId { get; set; }
+    public required string Status { get; set; }
+
+    /// <summary>Normalized <c>ReviewerReport</c> JSON when <see cref="Status"/> is ok.</summary>
+    public string? ReportJson { get; set; }
+
+    public string? RawOutput { get; set; }
+    public string? Error { get; set; }
+    public DateTimeOffset StartedAt { get; set; }
+    public DateTimeOffset EndedAt { get; set; }
+}
+
+public sealed record RunHistory(ReviewRun Run, IReadOnlyList<ReviewerResult> Results);
+
 /// <summary>Everything known about one PR, as needed for display and export.</summary>
 public sealed record PrHistory(
     PullRequest Pr,
     IReadOnlyList<ReviewSession> Sessions,
     IReadOnlyList<Round> Rounds,
     IReadOnlyList<Memo> Memos,
-    IReadOnlyList<string> Tags);
+    IReadOnlyList<string> Tags,
+    IReadOnlyList<RunHistory>? Runs = null)
+{
+    public IReadOnlyList<RunHistory> Runs { get; } = Runs ?? [];
+
+    /// <summary>Sessions of the interactive review (not the panel reviewers).</summary>
+    public IEnumerable<ReviewSession> ReviewSessions => Sessions.Where(s => s.Reviewer is null);
+}

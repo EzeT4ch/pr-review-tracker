@@ -68,6 +68,34 @@ internal static class Migrations
             PRIMARY KEY (pr_id, tag)
         );
         """,
+        """
+        ALTER TABLE sessions ADD COLUMN reviewer TEXT;
+
+        CREATE TABLE review_runs (
+            id          INTEGER PRIMARY KEY,
+            pr_id       INTEGER NOT NULL REFERENCES pull_requests (id) ON DELETE CASCADE,
+            started_at  TEXT NOT NULL,
+            ended_at    TEXT,
+            head_commit TEXT,
+            verdict     TEXT
+        );
+        CREATE INDEX ix_review_runs_pr ON review_runs (pr_id);
+
+        CREATE TABLE reviewer_results (
+            id          INTEGER PRIMARY KEY,
+            run_id      INTEGER NOT NULL REFERENCES review_runs (id) ON DELETE CASCADE,
+            reviewer    TEXT NOT NULL,
+            agent       TEXT NOT NULL,
+            session_id  INTEGER REFERENCES sessions (id) ON DELETE SET NULL,
+            status      TEXT NOT NULL,
+            report_json TEXT,
+            raw_output  TEXT,
+            error       TEXT,
+            started_at  TEXT NOT NULL,
+            ended_at    TEXT NOT NULL
+        );
+        CREATE INDEX ix_reviewer_results_run ON reviewer_results (run_id);
+        """,
     ];
 
     public static int LatestVersion => Steps.Length;

@@ -2,6 +2,7 @@ using System.Net;
 using Prt.Core.Agents;
 using Prt.Core.Bitbucket;
 using Prt.Core.Domain;
+using Prt.Core.Panel;
 using Prt.Core.Review;
 
 namespace Prt.Core.Tests;
@@ -9,7 +10,12 @@ namespace Prt.Core.Tests;
 internal sealed class FakeClock(DateTimeOffset start) : TimeProvider
 {
     private DateTimeOffset _now = start;
-    public override DateTimeOffset GetUtcNow() => _now = _now.AddMinutes(1);
+
+    public override DateTimeOffset GetUtcNow()
+    {
+        lock (this)
+            return _now = _now.AddMinutes(1);
+    }
 }
 
 internal sealed class FakeRunner : IProcessRunner
@@ -28,7 +34,8 @@ internal sealed class FakeRunner : IProcessRunner
 
     public Task<ProcessResult> RunCapturedAsync(string command, IReadOnlyList<string> args, string cwd, CancellationToken ct = default)
     {
-        Captured.Add((command, args.ToList(), cwd));
+        lock (Captured)
+            Captured.Add((command, args.ToList(), cwd));
         return Task.FromResult(OnCaptured(args.ToList()));
     }
 }
@@ -38,6 +45,7 @@ internal sealed class FakeBitbucket : IPullRequestSource
     public PullRequestInfo? Info { get; set; }
     public List<PrCommit> Commits { get; set; } = [];
     public bool Offline { get; set; }
+    public string? Diff { get; set; } = "diff --git a/src/Pay.cs b/src/Pay.cs\n+ cobrar();\n";
 
     public Task<PullRequestInfo> GetPullRequestAsync(PrRef prRef, CancellationToken ct = default) =>
         Offline ? throw new HttpRequestException("offline") : Task.FromResult(Info ?? Default(prRef));
@@ -45,23 +53,36 @@ internal sealed class FakeBitbucket : IPullRequestSource
     public Task<IReadOnlyList<PrCommit>> GetCommitsAsync(PrRef prRef, CancellationToken ct = default) =>
         Task.FromResult<IReadOnlyList<PrCommit>>(Commits);
 
+    public Task<string> GetDiffAsync(PrRef prRef, CancellationToken ct = default) =>
+        Diff is null ? throw new BitbucketException("sin diff") : Task.FromResult(Diff);
+
     public static PullRequestInfo Default(PrRef prRef) => new(
         prRef, "Agregar pagos con QR", "Implementa el flujo de cobro.", "OPEN", "Ana Pérez",
         "feature/qr", "main", "aaaaaaaaaaaa", prRef.WebUrl);
 }
 
-internal sealed class FakeUi : IReviewUi
+internal sealed class FakeUi : IReviewUi, IPanelUi
 {
     public List<string> Messages { get; } = [];
     public bool ConfirmAnswer { get; set; } = true;
     public string? Note { get; set; }
     public string? SessionId { get; set; }
 
-    public void Info(string message) => Messages.Add("info: " + message);
-    public void Warn(string message) => Messages.Add("warn: " + message);
+    public void Info(string message) => Add("info: " + message);
+    public void Warn(string message) => Add("warn: " + message);
     public bool Confirm(string question, bool defaultValue) => ConfirmAnswer;
     public string? AskSessionId(string agent) => SessionId;
     public string? AskNote() => Note;
+    public void ReviewerStarted(ReviewerDefinition reviewer, string agent, bool resumed) =>
+        Add($"start: {reviewer.Name} {agent} {(resumed ? "resume" : "new")}");
+    public void ReviewerFinished(ReviewerOutcome outcome) =>
+        Add($"done: {outcome.Reviewer.Name} {outcome.Result.Status}");
+
+    private void Add(string message)
+    {
+        lock (Messages)
+            Messages.Add(message);
+    }
 }
 
 internal sealed class StubHandler(Func<HttpRequestMessage, HttpResponseMessage> respond) : HttpMessageHandler

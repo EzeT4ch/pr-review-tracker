@@ -77,4 +77,27 @@ public class BitbucketClientTests
         Assert.Equal(["c3full"], CommitHashes.Since(commits, "c2")!.Select(c => c.Hash));
         Assert.Null(CommitHashes.Since(commits, "zzz"));
     }
+
+    [Fact]
+    public async Task Diff_follows_redirects_keeping_credentials()
+    {
+        var handler = new StubHandler(request =>
+        {
+            if (request.RequestUri!.AbsolutePath.EndsWith("/pullrequests/42/diff"))
+            {
+                var redirect = new HttpResponseMessage(HttpStatusCode.Found);
+                redirect.Headers.Location = new Uri("/2.0/repositories/acme/api/diff/acme/api:abc..def?from_pullrequest_id=42", UriKind.Relative);
+                return redirect;
+            }
+            return new HttpResponseMessage(HttpStatusCode.OK) { Content = new StringContent("diff --git a/x b/x\n") };
+        });
+        var client = new BitbucketClient(new HttpClient(handler), new BitbucketSettings { Username = "u", ApiToken = "t" });
+
+        var diff = await client.GetDiffAsync(Ref);
+
+        Assert.StartsWith("diff --git", diff);
+        Assert.Equal(2, handler.Requests.Count);
+        Assert.Equal("api.bitbucket.org", handler.Requests[1].RequestUri!.Host);
+        Assert.Equal("Basic", handler.Requests[1].Headers.Authorization!.Scheme);
+    }
 }

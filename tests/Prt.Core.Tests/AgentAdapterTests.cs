@@ -154,4 +154,49 @@ public class AgentAdapterTests
         Assert.Equal(["ask", "{sessionId}", "{prompt}"], merged.AskArgs);
         Assert.Equal(["--resume", "{sessionId}"], merged.ResumeArgs);
     }
+
+    [Fact]
+    public async Task Review_runs_pass_the_context_dir_and_report_session_ids()
+    {
+        var runner = new FakeRunner
+        {
+            OnCaptured = args => args[0] == "exec"
+                ? new ProcessResult(0, """
+                    {"type":"thread.started","thread_id":"thr-1"}
+                    {"type":"item.completed","item":{"type":"agent_message","text":"{}"}}
+                    """, "")
+                : new ProcessResult(0, """
+                    {"type":"step_start","sessionID":"ses_9","part":{}}
+                    {"type":"text","sessionID":"ses_9","part":{"type":"text","text":"{}"}}
+                    """, ""),
+        };
+
+        var claude = await new ClaudeAdapter(AgentSettings.DefaultFor("claude"), new FakeRunner
+        {
+            OnCaptured = _ => new ProcessResult(0, """{"result":"{}"}""", ""),
+        }).RunReviewAsync(null, "p", "/repo", "/ctx");
+        var codex = await new CodexAdapter(AgentSettings.DefaultFor("codex"), runner, "/nonexistent").RunReviewAsync(null, "p", "/repo", "/ctx");
+        var opencode = await new OpencodeAdapter(AgentSettings.DefaultFor("opencode"), runner).RunReviewAsync(null, "p", "/repo", "/ctx");
+        var resumed = await new OpencodeAdapter(AgentSettings.DefaultFor("opencode"), runner).RunReviewAsync("ses_9", "p2", "/repo", "/ctx");
+
+        Assert.True(Guid.TryParse(claude.SessionId, out _));
+        Assert.Equal("thr-1", codex.SessionId);
+        Assert.Equal("ses_9", opencode.SessionId);
+        Assert.Equal(["run", "--session", "ses_9", "--format", "json", "p2"], runner.Captured[^1].Args);
+        Assert.Equal("ses_9", resumed.SessionId);
+    }
+
+    [Fact]
+    public async Task Claude_review_args_keep_variadic_flags_before_single_valued_ones()
+    {
+        var runner = new FakeRunner { OnCaptured = _ => new ProcessResult(0, """{"result":"ok"}""", "") };
+        await new ClaudeAdapter(AgentSettings.DefaultFor("claude"), runner).RunReviewAsync("s1", "prompt", "/repo", "/ctx");
+
+        var args = runner.Captured.Single().Args;
+        Assert.Equal("-p", args[0]);
+        Assert.Equal("/ctx", args[args.IndexOf("--add-dir") + 1]);
+        Assert.Equal("s1", args[args.IndexOf("--resume") + 1]);
+        Assert.True(args.IndexOf("--allowedTools") < args.IndexOf("--resume"));
+        Assert.Equal(["--output-format", "json", "prompt"], args[^3..]);
+    }
 }

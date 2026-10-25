@@ -4,7 +4,7 @@
     <OutputType>Exe</OutputType>
     <AssemblyName>prt</AssemblyName>
     <RootNamespace>Prt.Cli</RootNamespace>
-    <Version>0.1.0</Version>
+    <Version>0.2.0</Version>
     <PackAsTool>true</PackAsTool>
     <ToolCommandName>prt</ToolCommandName>
     <PackageId>PrReviewTracker</PackageId>

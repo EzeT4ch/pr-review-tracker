@@ -1,10 +1,12 @@
 using System.Diagnostics;
+using Prt.Core.Domain;
+using Prt.Core.Panel;
 using Prt.Core.Review;
 using Spectre.Console;
 
 namespace Prt.Cli;
 
-internal sealed class ConsoleUi : IReviewUi
+internal sealed class ConsoleUi : IReviewUi, IPanelUi
 {
     public static bool Interactive => !Console.IsInputRedirected;
 
@@ -24,6 +26,27 @@ internal sealed class ConsoleUi : IReviewUi
         var id = AnsiConsole.Prompt(
             new TextPrompt<string>($"Pegá el id de la sesión de {Markup.Escape(agent)} (vacío para cancelar):").AllowEmpty());
         return string.IsNullOrWhiteSpace(id) ? null : id.Trim();
+    }
+
+    public void ReviewerStarted(ReviewerDefinition reviewer, string agent, bool resumed) =>
+        AnsiConsole.MarkupLine($"[grey]›[/] {Markup.Escape(reviewer.Title)} [grey]({Markup.Escape(agent)}, {(resumed ? "sesión retomada" : "sesión nueva")})[/]");
+
+    public void ReviewerFinished(ReviewerOutcome outcome)
+    {
+        var name = Markup.Escape(outcome.Reviewer.Title);
+        if (outcome.Report is { } report)
+        {
+            var counts = string.Join(" ", new[] { Severity.Blocker, Severity.Major, Severity.Minor, Severity.Info }
+                .Select(s => $"{ReviewStandard.Icon(s)}{report.OpenFindings.Count(f => f.Severity == s)}"));
+            AnsiConsole.MarkupLine($"[green]✓[/] {name}: {Markup.Escape(ReviewStandard.Label(report.Verdict))}  {counts}");
+        }
+        else
+        {
+            var what = outcome.Result.Status == ResultStatus.Invalid ? "respuesta fuera de formato" : "falló";
+            AnsiConsole.MarkupLine($"[red]✗[/] {name}: {what}: {Markup.Escape(outcome.Result.Error ?? "")}");
+        }
+        foreach (var warning in outcome.Warnings)
+            Warn($"{outcome.Reviewer.Name}: {warning}");
     }
 
     public string? AskNote() =>
