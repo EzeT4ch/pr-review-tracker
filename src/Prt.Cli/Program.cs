@@ -1,6 +1,15 @@
 ﻿using System.CommandLine;
+using System.Text;
 using Prt.Cli.Commands;
 using Spectre.Console;
+
+// The Windows console defaults to an OEM code page (accents come out as '?'). This must run before
+// AnsiConsole is first used, because Spectre reads the encoding when it creates the console.
+if (OperatingSystem.IsWindows())
+{
+    Console.OutputEncoding = Encoding.UTF8;
+    Console.InputEncoding = Encoding.UTF8;
+}
 
 // Before the first AnsiConsole access, which captures the encoding: the OEM code page (CP850) garbles accents.
 Console.OutputEncoding = new System.Text.UTF8Encoding(encoderShouldEmitUTF8Identifier: false);
@@ -28,6 +37,7 @@ var root = new RootCommand(
     SyncCommands.Sync(),
     SyncCommands.Export(),
     SyncCommands.RepairText(),
+    WebCommands.Web(),
 };
 
 return await root.Parse(args).InvokeAsync();

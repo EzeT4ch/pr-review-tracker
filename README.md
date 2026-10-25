@@ -10,7 +10,7 @@ Herramienta de terminal para darle trazabilidad a las revisiones de Pull Request
 
 ## Instalación
 
-Requiere el SDK de .NET 10.
+Requiere el SDK de .NET 10 (incluye el runtime de ASP.NET Core que usa el panel web).
 
 ```bash
 dotnet pack src/Prt.Cli -c Release
@@ -25,6 +25,8 @@ Para actualizar: `dotnet tool update -g --add-source ./nupkg PrReviewTracker` (s
 prt init                       # interactivo: vault, carpeta, agente por defecto, credenciales
 prt map acme/payments ~/src/payments   # checkout local donde corre el agente para ese repo
 ```
+
+Si un repo no tiene checkout asociado, `prt review` y `prt analyze` preguntan si querés asociarlo. Si los corrés desde dentro de un clon de ese repo (detectado por el remoto de Bitbucket, también desde subcarpetas o worktrees), lo proponen directamente.
 
 Bitbucket Cloud: creá un **API token** de Atlassian con permiso de lectura de pull requests y repositorios, y usá tu email de Atlassian como usuario (también funcionan usuario + app password). Las variables `PRT_BB_USER` y `PRT_BB_TOKEN` tienen prioridad sobre el config.
 
@@ -69,6 +71,43 @@ prt repair-text [pr] [--dry-run]               # reparar acentos rotos (UTF-8 le
 4. Pide el memo al agente en modo headless **dentro de la misma sesión** y lo guarda; extrae el veredicto y los pendientes.
 5. Pregunta si querés agregar una nota propia (`$VISUAL`/`$EDITOR`, o en línea terminando con `.`).
 6. Exporta la nota del PR y el índice al vault.
+
+## Panel web
+
+```bash
+prt web start [--port 5178] [--open] [--sleep-after 10]   # en segundo plano
+prt web status                                           # URL, memoria, si está en reposo, tareas en curso
+prt web stop                                             # lo apaga
+prt web serve                                            # en primer plano (Ctrl+C para salir)
+```
+
+Desde el navegador (`http://127.0.0.1:5178`) podés:
+
+- ver la lista de PRs con filtros por estado y repo, y búsqueda;
+- abrir el detalle de un PR: sesiones con el comando para retomarlas, el último análisis del panel (hallazgos, preguntas), análisis anteriores, timeline y descripción;
+- abrir el reporte completo de cada análisis;
+- registrar notas, decisiones y tags (se exportan a Obsidian igual que desde la consola);
+- registrar un PR nuevo, actualizarlo desde Bitbucket o lanzar `analyze` eligiendo revisores y agente. Corren como tareas en segundo plano; la página se refresca sola mientras corren.
+
+La revisión interactiva (`prt review`) sigue en la terminal, porque necesita una consola.
+
+**Consumo mínimo**:
+
+- Kestrel en modo *slim* (sin MVC ni Razor), páginas generadas en el servidor sin JavaScript, con el CSS embebido.
+- Una conexión a SQLite por pedido y GC de estación sin hilo de fondo (`ConserveMemory`).
+- En reposo usa unos 12 MB de memoria propia; el resto que muestra el sistema son librerías del runtime compartidas.
+- **Reposo**: tras `--sleep-after` minutos sin pedidos (10 por defecto; 0 lo desactiva) libera memoria y conexiones y no ejecuta nada hasta el próximo pedido, que lo despierta solo. No entra en reposo mientras hay un análisis en curso.
+
+**Seguridad**:
+
+- Escucha solo en `127.0.0.1` y rechaza pedidos con otro `Host` (protección contra DNS rebinding).
+- Los formularios llevan un token anti-CSRF.
+- El Markdown de los agentes se muestra con el HTML desactivado y una Content-Security-Policy estricta.
+- `prt web stop` usa un token que se guarda en `web.json`, en la carpeta de datos, con permisos 600.
+
+| Lista de PRs | Detalle de un PR | Reporte de un análisis |
+|---|---|---|
+| ![](docs/img/web-home.png) | ![](docs/img/web-pr.png) | ![](docs/img/web-run.png) |
 
 ## Panel de revisores
 
@@ -123,7 +162,9 @@ Los prompts (`prompts.initial`, `prompts.reReview`, `prompts.summary`) también 
 <vault>/PR Reviews/
 ├── Index.md                          # tabla por estado + consulta Dataview
 └── acme/payments/
-    └── PR-42 - Agregar pagos QR.md
+    └── PR-42/                                # una carpeta por PR
+        ├── PR-42 - Agregar pagos QR.md       # nota principal
+        └── Análisis 2026-10-25 1403 (run 3).md   # un reporte por cada `prt analyze`
 ```
 
 Cada nota tiene:
@@ -132,7 +173,9 @@ Cada nota tiene:
 - **Sesiones**, **Pendientes** (del último memo del agente) y **Timeline** con cada ronda: prompt enviado, memo del agente y tus notas, en callouts.
 - Lo generado va entre `<!-- prt:begin -->` y `<!-- prt:end -->`. **Todo lo que escribas fuera de esos marcadores se conserva** al regenerar (por ejemplo, la sección "Notas libres"). El frontmatter se regenera siempre. Si cambia el título del PR, la nota se renombra.
 
-La base SQLite es la fuente de verdad: `prt export` regenera el vault en cualquier momento.
+La base SQLite es la fuente de verdad: `prt export` regenera el vault en cualquier momento. Las notas creadas con versiones anteriores a la 0.3 (fuera de la carpeta del PR) se mueven solas a su carpeta en el siguiente export.
+
+En la consola clásica de Windows (sin Windows Terminal), `prt` usa texto en lugar de emojis (`BLOQ`, `IMP`, `MEN`, `INFO`). Para forzarlo en cualquier terminal: `PRT_ASCII=1`.
 
 ## Desarrollo
 
@@ -142,5 +185,6 @@ dotnet test
 ```
 
 - `src/Prt.Core`: dominio, SQLite (`Storage`), cliente de Bitbucket, adaptadores de agentes, export a Obsidian, el flujo de revisión (`Review/ReviewService`) y el panel (`Panel/`: estándar, parser de reportes, perfiles por proyecto, orquestación y renderizado). Los revisores y el estándar incorporados están en `Panel/Defaults/`.
+- `src/Prt.Web`: panel web (Kestrel slim, páginas en el servidor, tareas en segundo plano, modo reposo).
 - `src/Prt.Cli`: comandos (`System.CommandLine`) e interacción (`Spectre.Console`).
 - `tests/Prt.Core.Tests`: xUnit, con runner de procesos, Bitbucket y UI falsos.

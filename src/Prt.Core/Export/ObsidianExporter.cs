@@ -35,7 +35,11 @@ public sealed partial class ObsidianExporter
     public string RootDir => Path.Combine(_vaultPath, _folder);
     public string IndexPath => Path.Combine(RootDir, "Index.md");
 
-    public string NoteDirectory(PullRequest pr) => Path.Combine(RootDir, SafeName(pr.Workspace), SafeName(pr.Repo));
+    /// <summary>Folder of the repo; each PR gets its own folder inside.</summary>
+    public string RepoDirectory(PullRequest pr) => Path.Combine(RootDir, SafeName(pr.Workspace), SafeName(pr.Repo));
+
+    /// <summary>One folder per PR holding its main note and every panel report.</summary>
+    public string NoteDirectory(PullRequest pr) => Path.Combine(RepoDirectory(pr), $"PR-{pr.Number}");
 
     public string NoteFileName(PullRequest pr)
     {
@@ -53,8 +57,9 @@ public sealed partial class ObsidianExporter
         Directory.CreateDirectory(dir);
         var path = Path.Combine(dir, NoteFileName(pr));
 
-        // The title may have changed since the last export: rename instead of duplicating.
-        var existing = FindExistingNote(dir, pr.Number);
+        // The title may have changed since the last export, and versions before 0.3 wrote the note next to
+        // the PR folder: move it instead of duplicating, keeping what the user wrote in it.
+        var existing = FindExistingNote(dir, pr.Number) ?? FindExistingNote(RepoDirectory(pr), pr.Number);
         if (existing is not null && !string.Equals(existing, path, StringComparison.Ordinal))
             File.Move(existing, path, overwrite: true);
 
@@ -98,16 +103,16 @@ public sealed partial class ObsidianExporter
         return path;
     }
 
-    public string RunDirectory(PullRequest pr) => Path.Combine(NoteDirectory(pr), $"PR-{pr.Number}");
+    public string RunDirectory(PullRequest pr) => NoteDirectory(pr);
 
     private string RunFileName(ReviewRun run) =>
         $"Análisis {Local(run.StartedAt).ToString("yyyy-MM-dd HHmm", CultureInfo.InvariantCulture)} (run {run.Id})";
 
-    private string NoteLink(PullRequest pr) =>
-        $"{_folder}/{SafeName(pr.Workspace)}/{SafeName(pr.Repo)}/{Path.GetFileNameWithoutExtension(NoteFileName(pr))}";
+    private string PrFolderLink(PullRequest pr) => $"{_folder}/{SafeName(pr.Workspace)}/{SafeName(pr.Repo)}/PR-{pr.Number}";
 
-    private string RunLink(PullRequest pr, ReviewRun run) =>
-        $"{_folder}/{SafeName(pr.Workspace)}/{SafeName(pr.Repo)}/PR-{pr.Number}/{RunFileName(run)}";
+    private string NoteLink(PullRequest pr) => $"{PrFolderLink(pr)}/{Path.GetFileNameWithoutExtension(NoteFileName(pr))}";
+
+    private string RunLink(PullRequest pr, ReviewRun run) => $"{PrFolderLink(pr)}/{RunFileName(run)}";
 
     public string ExportIndex(IReadOnlyList<PrHistory> histories)
     {
@@ -369,7 +374,7 @@ public sealed partial class ObsidianExporter
             foreach (var h in group)
             {
                 var pr = h.Pr;
-                var link = $"{_folder}/{SafeName(pr.Workspace)}/{SafeName(pr.Repo)}/{Path.GetFileNameWithoutExtension(NoteFileName(pr))}";
+                var link = NoteLink(pr);
                 sb.Append("| [[").Append(link).Append("\\|").Append(pr.Key).Append("]]")
                     .Append(" | ").Append(MarkdownText.Cell(pr.Title))
                     .Append(" | ").Append(MarkdownText.Cell(pr.Author))

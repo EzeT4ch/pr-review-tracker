@@ -73,6 +73,7 @@ internal static class ReviewCommands
     private static async Task RunReview(App app, PrRef prRef, ReviewOptions options, CancellationToken ct)
     {
         app.WarnIfNoVault();
+        app.EnsureCheckout(prRef);
         var outcome = await app.Review.ReviewAsync(prRef, options, ct);
 
         AnsiConsole.WriteLine();

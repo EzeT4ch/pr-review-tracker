@@ -47,17 +47,17 @@ public sealed class BitbucketClient : IPullRequestSource
     private const int MaxRedirects = 5;
     private readonly HttpClient _http;
     private readonly string _baseUrl;
+    private readonly AuthenticationHeaderValue? _auth;
 
     public BitbucketClient(HttpClient http, BitbucketSettings settings)
     {
         _http = http;
         _baseUrl = settings.BaseUrl.TrimEnd('/');
-        _http.DefaultRequestHeaders.Accept.Add(new MediaTypeWithQualityHeaderValue("application/json"));
-        _http.DefaultRequestHeaders.UserAgent.Add(new ProductInfoHeaderValue("prt", "1.0"));
+        // Headers go on each request, not on the HttpClient: it is shared and outlives this client.
         if (settings.EffectiveUsername is { Length: > 0 } user && settings.EffectiveToken is { Length: > 0 } token)
         {
             var basic = Convert.ToBase64String(Encoding.UTF8.GetBytes($"{user}:{token}"));
-            _http.DefaultRequestHeaders.Authorization = new AuthenticationHeaderValue("Basic", basic);
+            _auth = new AuthenticationHeaderValue("Basic", basic);
         }
     }
 
@@ -125,7 +125,11 @@ public sealed class BitbucketClient : IPullRequestSource
         var current = new Uri(url);
         for (var hop = 0; ; hop++)
         {
-            var response = await _http.GetAsync(current, ct);
+            using var request = new HttpRequestMessage(HttpMethod.Get, current);
+            request.Headers.Accept.Add(new MediaTypeWithQualityHeaderValue("application/json"));
+            request.Headers.UserAgent.Add(new ProductInfoHeaderValue("prt", "1.0"));
+            request.Headers.Authorization = _auth;
+            var response = await _http.SendAsync(request, ct);
             if (IsRedirect(response.StatusCode) && response.Headers.Location is { } location && hop < MaxRedirects)
             {
                 response.Dispose();

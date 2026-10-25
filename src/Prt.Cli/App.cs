@@ -48,6 +48,46 @@ internal sealed class App : IDisposable
             Ui.Warn("No hay vault de Obsidian configurado: no se exportan notas. Configuralo con `prt init`.");
     }
 
+    /// <summary>
+    /// When the repo has no local checkout mapped, offers to map one (suggesting the current directory
+    /// when it is a checkout of that repo), so agents can read the code and not only the diff.
+    /// </summary>
+    public void EnsureCheckout(PrRef prRef)
+    {
+        var repoKey = prRef.RepoKey;
+        if (Config.RepoPathFor(repoKey) is not null || !ConsoleUi.Interactive)
+            return;
+
+        if (Config.RepoPaths.TryGetValue(repoKey, out var stale))
+            Ui.Warn($"El checkout asociado a {repoKey} ya no existe: {stale}");
+
+        var detected = GitCheckout.FindFor(Directory.GetCurrentDirectory(), repoKey);
+        var question = detected is null
+            ? $"{repoKey} no tiene checkout local asociado (sin él los agentes solo ven el diff). ¿Asociarlo ahora?"
+            : $"{repoKey} no tiene checkout local asociado. ¿Asociarlo a {detected}?";
+        if (!AnsiConsole.Confirm(Markup.Escape(question), true))
+        {
+            Ui.Info($"Podés asociarlo después con: prt map {repoKey} <ruta>");
+            return;
+        }
+
+        var path = detected;
+        if (path is null)
+        {
+            var prompt = new TextPrompt<string>("Ruta del checkout:")
+                .Validate(p => Directory.Exists(Path.GetFullPath(p.Trim()))
+                    ? ValidationResult.Success()
+                    : ValidationResult.Error("[red]Esa carpeta no existe.[/]"));
+            path = Path.GetFullPath(AnsiConsole.Prompt(prompt).Trim());
+            if (GitCheckout.FindRoot(path) is { } root && !GitCheckout.HasBitbucketRemote(root, repoKey))
+                Ui.Warn($"{path} no tiene un remoto de Bitbucket {repoKey}; se asocia igual.");
+        }
+
+        Config.RepoPaths[repoKey] = path;
+        ConfigStore.Save(Config);
+        Ui.Success($"{repoKey} → {path}");
+    }
+
     public string ResumeCommand(string agent, string sessionId)
     {
         try

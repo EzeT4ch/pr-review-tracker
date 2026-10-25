@@ -10,11 +10,11 @@ internal sealed class ConsoleUi : IReviewUi, IPanelUi
 {
     public static bool Interactive => !Console.IsInputRedirected;
 
-    public void Info(string message) => AnsiConsole.MarkupLine($"[grey]›[/] {Markup.Escape(message)}");
+    public void Info(string message) => AnsiConsole.MarkupLine($"{Symbols.Bullet} {Markup.Escape(message)}");
 
-    public void Warn(string message) => AnsiConsole.MarkupLine($"[yellow]![/] {Markup.Escape(message)}");
+    public void Warn(string message) => AnsiConsole.MarkupLine($"{Symbols.Warning} {Markup.Escape(message)}");
 
-    public void Success(string message) => AnsiConsole.MarkupLine($"[green]✓[/] {Markup.Escape(message)}");
+    public void Success(string message) => AnsiConsole.MarkupLine($"{Symbols.Ok} {Markup.Escape(message)}");
 
     public bool Confirm(string question, bool defaultValue) =>
         Interactive ? AnsiConsole.Confirm(Markup.Escape(question), defaultValue) : defaultValue;
@@ -29,7 +29,7 @@ internal sealed class ConsoleUi : IReviewUi, IPanelUi
     }
 
     public void ReviewerStarted(ReviewerDefinition reviewer, string agent, bool resumed) =>
-        AnsiConsole.MarkupLine($"[grey]›[/] {Markup.Escape(reviewer.Title)} [grey]({Markup.Escape(agent)}, {(resumed ? "sesión retomada" : "sesión nueva")})[/]");
+        AnsiConsole.MarkupLine($"{Symbols.Bullet} {Markup.Escape(reviewer.Title)} [grey]({Markup.Escape(agent)}, {(resumed ? "sesión retomada" : "sesión nueva")})[/]");
 
     public void ReviewerFinished(ReviewerOutcome outcome)
     {
@@ -37,13 +37,13 @@ internal sealed class ConsoleUi : IReviewUi, IPanelUi
         if (outcome.Report is { } report)
         {
             var counts = string.Join(" ", new[] { Severity.Blocker, Severity.Major, Severity.Minor, Severity.Info }
-                .Select(s => $"{ReviewStandard.Icon(s)}{report.OpenFindings.Count(f => f.Severity == s)}"));
-            AnsiConsole.MarkupLine($"[green]✓[/] {name}: {Markup.Escape(ReviewStandard.Label(report.Verdict))}  {counts}");
+                .Select(s => $"{Symbols.Severity(s)} {report.OpenFindings.Count(f => f.Severity == s)}"));
+            AnsiConsole.MarkupLine($"{Symbols.Ok} {name}: {Markup.Escape(ReviewStandard.Label(report.Verdict))}  {counts}");
         }
         else
         {
             var what = outcome.Result.Status == ResultStatus.Invalid ? "respuesta fuera de formato" : "falló";
-            AnsiConsole.MarkupLine($"[red]✗[/] {name}: {what}: {Markup.Escape(outcome.Result.Error ?? "")}");
+            AnsiConsole.MarkupLine($"{Symbols.Fail} {name}: {what}: {Markup.Escape(outcome.Result.Error ?? "")}");
         }
         foreach (var warning in outcome.Warnings)
             Warn($"{outcome.Reviewer.Name}: {warning}");

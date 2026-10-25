@@ -40,7 +40,7 @@ public class ObsidianExporterTests
         using var dir = new TempDir();
         var path = Exporter(dir.Path).ExportPr(History());
 
-        Assert.Equal(Path.Combine(dir.Path, "PR Reviews", "acme", "api", "PR-42 - Pagos QR v2.md"), path);
+        Assert.Equal(Path.Combine(dir.Path, "PR Reviews", "acme", "api", "PR-42", "PR-42 - Pagos QR v2.md"), path);
         var text = File.ReadAllText(path);
         Assert.StartsWith("---\npr: \"acme/api#42\"\n", text);
         Assert.Contains("    resume: \"claude --resume uuid-1\"\n", text);
@@ -120,8 +120,26 @@ public class ObsidianExporterTests
         var path = exporter.ExportIndex([History(title: "a | b")]);
 
         var text = File.ReadAllText(path);
-        Assert.Contains("| [[PR Reviews/acme/api/PR-42 - a b\\|acme/api#42]] | a \\| b | Ana | APROBAR |  | 2026-03-11 14:00 | 1 |", text);
+        Assert.Contains("| [[PR Reviews/acme/api/PR-42/PR-42 - a b\\|acme/api#42]] | a \\| b | Ana | APROBAR |  | 2026-03-11 14:00 | 1 |", text);
         Assert.Contains("```dataview", text);
+    }
+
+    [Fact]
+    public void Moves_notes_from_the_pre_folder_layout_into_the_pr_folder()
+    {
+        using var dir = new TempDir();
+        var repoDir = Path.Combine(dir.Path, "PR Reviews", "acme", "api");
+        Directory.CreateDirectory(repoDir);
+        var exporter = Exporter(dir.Path);
+        var old = Path.Combine(repoDir, "PR-42 - Título viejo.md");
+        File.WriteAllText(old, exporter.RenderNote(History(), null).Replace("## Notas libres\n", "## Notas libres\n\nMi análisis.\n"));
+
+        var path = exporter.ExportPr(History());
+
+        Assert.False(File.Exists(old));
+        Assert.Equal(Path.Combine(repoDir, "PR-42", "PR-42 - Pagos QR v2.md"), path);
+        Assert.Contains("Mi análisis.", File.ReadAllText(path));
+        Assert.Equal(["PR-42"], Directory.GetFileSystemEntries(repoDir).Select(Path.GetFileName));
     }
 
     [Theory]

@@ -34,7 +34,9 @@ internal static class PanelCommands
             var names = result.GetValue(reviewers)?
                 .SelectMany(r => r.Split(',', StringSplitOptions.RemoveEmptyEntries | StringSplitOptions.TrimEntries))
                 .Select(r => r.ToLowerInvariant()).Distinct().ToList();
-            var outcome = await app.Panel.AnalyzeAsync(PrRef.Parse(result.GetValue(pr)!),
+            var prRef = PrRef.Parse(result.GetValue(pr)!);
+            app.EnsureCheckout(prRef);
+            var outcome = await app.Panel.AnalyzeAsync(prRef,
                 new PanelOptions(names, result.GetValue(agent), result.GetValue(fresh), result.GetValue(parallel)), ct);
 
             AnsiConsole.WriteLine();
@@ -118,7 +120,7 @@ internal static class PanelCommands
                 ? ProfileLoader.Load([ProfileLoader.GlobalDir])
                 : ProfileLoader.Load(repoKey, app.Config.RepoPathFor(repoKey));
 
-            var table = new Table().Border(TableBorder.Rounded).AddColumns("Revisor", "Título", "Prefijo", "Agente", "Activo", "Origen");
+            var table = new Table().Border(Symbols.Border).AddColumns("Revisor", "Título", "Prefijo", "Agente", "Activo", "Origen");
             foreach (var r in profile.Reviewers)
             {
                 table.AddRow(
@@ -179,7 +181,9 @@ internal static class PanelCommands
     {
         AnsiConsole.Write(new Rule($"[bold]{Markup.Escape(pr.Key)}[/] · panel · {Markup.Escape(view.Run.Verdict ?? "sin veredicto")}").LeftJustified());
 
-        var summary = new Table().Border(TableBorder.Rounded).AddColumns("Revisor", "Agente", "Veredicto", "🔴", "🟠", "🟡", "🔵", "Resueltos");
+        var summary = new Table().Border(Symbols.Border).AddColumns("Revisor", "Agente", "Veredicto")
+            .AddColumns(Severities.Select(s => new TableColumn(Symbols.Severity(s))).ToArray())
+            .AddColumn("Resueltos");
         foreach (var (result, report) in view.Reviewers)
         {
             if (report is null)
@@ -200,11 +204,11 @@ internal static class PanelCommands
         {
             var findings = new Table().Border(TableBorder.Simple).AddColumns("", "ID", "Revisor", "Hallazgo", "Ubicación");
             foreach (var (reviewer, f) in open)
-                findings.AddRow(ReviewStandard.Icon(f.Severity), f.Id, Markup.Escape(reviewer), Markup.Escape(f.Title), Markup.Escape(f.Location));
+                findings.AddRow(Symbols.Severity(f.Severity), f.Id, Markup.Escape(reviewer), Markup.Escape(f.Title), Markup.Escape(f.Location));
             AnsiConsole.Write(findings);
         }
 
         foreach (var (reviewer, question) in view.Questions)
-            AnsiConsole.MarkupLine($"[blue]?[/] [bold]{Markup.Escape(reviewer)}:[/] {Markup.Escape(question)}");
+            AnsiConsole.MarkupLine($"{Symbols.Question} [bold]{Markup.Escape(reviewer)}:[/] {Markup.Escape(question)}");
     }
 }

@@ -93,7 +93,7 @@ Cada corrida genera, siempre con la misma estructura:
 6. **Preguntas para el revisor humano**, como checklist.
 7. **Resúmenes por revisor**, y errores si algún revisor falló.
 
-En Obsidian queda como `PR Reviews/<ws>/<repo>/PR-<n>/Análisis <fecha> (run <id>).md`. La nota del PR muestra la última corrida (sección *Panel de revisores*) y la agrega a la timeline. En la terminal se ve con `prt report <pr>` (`--markdown` o `--json` para exportar).
+En Obsidian queda como `PR Reviews/<ws>/<repo>/PR-<n>/Análisis <fecha> (run <id>).md`, en la misma carpeta que la nota principal del PR. La nota del PR muestra la última corrida (sección *Panel de revisores*) y la agrega a la timeline. En la terminal se ve con `prt report <pr>` (`--markdown` o `--json` para exportar).
 
 ## 7. Personalización por proyecto
 
