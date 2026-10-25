@@ -10,7 +10,7 @@ using static Prt.Web.Html;
 namespace Prt.Web;
 
 /// <summary>Server-rendered pages of the panel.</summary>
-internal sealed class Pages(WebContext context, JobRunner jobs, string token)
+internal sealed partial class Pages(WebContext context, JobRunner jobs, string token, DiffCache diffs)
 {
     private static readonly Severity[] Severities = [Severity.Blocker, Severity.Major, Severity.Minor, Severity.Info];
 
@@ -106,6 +106,7 @@ internal sealed class Pages(WebContext context, JobRunner jobs, string token)
         sb.Append("<div class=\"card\"><div class=\"row\">");
         sb.Append("<form method=\"post\" class=\"inline\" action=\"").Append(url).Append("/sync\">").Append(Csrf(token))
             .Append("<button>Actualizar desde Bitbucket</button></form>");
+        sb.Append("<a href=\"").Append(url).Append("/diff\">Ver diff</a>");
         sb.Append("<span class=\"muted\">Revisión interactiva: <code>prt review ").Append(E(pr.Key)).Append("</code></span></div>");
         AppendAnalyzeForm(sb, config, pr, url);
         sb.Append("</div>");
@@ -346,6 +347,8 @@ internal sealed class Pages(WebContext context, JobRunner jobs, string token)
                 .Append("</code> <span class=\"muted\">(clon gestionado)</span>");
         sb.Append("</p>");
 
+        if (File.Exists(UnifiedDiff.RunDiffPath(context.RunsRoot, prRef, runId)))
+            sb.Append("<p><a href=\"").Append(url).Append("/run/").Append(runId).Append("/diff\">Ver el diff analizado, con los hallazgos sobre el código</a></p>");
         AppendReviewerTable(sb, view);
         AppendFindings(sb, view, detailed: true);
 

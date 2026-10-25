@@ -202,6 +202,58 @@ public sealed class WebServerTests : IAsyncLifetime
     }
 
     [Fact]
+    public async Task Diff_page_shows_the_changes_with_findings_on_their_lines()
+    {
+        _bitbucket.Diff = UnifiedDiffTests.Sample;
+        _runner.OnCaptured = _ => new ProcessResult(0, JsonSerializer.Serialize(new
+        {
+            result = """{"reviewer":"security","verdict":"block","summary":"s","findings":[{"id":"SEC-1","severity":"blocker","title":"SQL injection","file":"src/Pay.cs","line":11,"description":"d","recommendation":"Usar parámetros."},{"id":"SEC-2","severity":"minor","title":"Sin línea","file":"src/Nuevo.cs"}]}""",
+        }), "");
+        await Post("/track", ("csrf", Token), ("pr", "acme/api#42"), ("action", "analyze"));
+        await WaitForJob(Ref);
+
+        var page = await _http.GetStringAsync("/pr/acme/api/42/diff");
+
+        Assert.Contains("5 archivo(s)", page);
+        Assert.Contains("docs/old.md → docs/new.md", page);
+        Assert.Contains("id=\"file-0-L11\"", page);
+        // The finding goes right after its line, before the next one.
+        var line11 = page.IndexOf("id=\"file-0-L11\"", StringComparison.Ordinal);
+        Assert.InRange(page.IndexOf("SQL injection", line11, StringComparison.Ordinal), line11, page.IndexOf("id=\"file-0-L12\"", StringComparison.Ordinal));
+        Assert.Contains("Sin línea", page);
+        // Code is escaped.
+        Assert.Contains("// &lt;script&gt;", page);
+        Assert.DoesNotContain("// <script>", page);
+
+        // The run keeps the diff it analysed, even if the PR changes later.
+        _bitbucket.Diff = "diff --git a/otro.cs b/otro.cs\n";
+        using var store = new SqliteStore(_db);
+        var runId = store.ListRuns(store.FindPullRequest(Ref)!.Id).Single().Run.Id;
+        var runDiff = await _http.GetStringAsync($"/pr/acme/api/42/run/{runId}/diff");
+        Assert.Contains("src/Pay.cs", runDiff);
+        Assert.Contains($"/pr/acme/api/42/run/{runId}/diff", await _http.GetStringAsync($"/pr/acme/api/42/run/{runId}"));
+        Assert.Contains("/pr/acme/api/42/diff", await _http.GetStringAsync("/pr/acme/api/42"));
+
+        // Cached for a couple of minutes unless refreshed.
+        Assert.Contains("src/Pay.cs", await _http.GetStringAsync("/pr/acme/api/42/diff"));
+        Assert.Contains("otro.cs", await _http.GetStringAsync("/pr/acme/api/42/diff?refresh=1"));
+    }
+
+    [Fact]
+    public async Task Diff_page_falls_back_to_the_last_analysis_when_offline()
+    {
+        _bitbucket.Diff = UnifiedDiffTests.Sample;
+        await Post("/track", ("csrf", Token), ("pr", "acme/api#42"), ("action", "analyze"));
+        await WaitForJob(Ref);
+        _bitbucket.Diff = null;
+
+        var page = await _http.GetStringAsync("/pr/acme/api/42/diff?refresh=1");
+
+        Assert.Contains("No se pudo consultar Bitbucket", page);
+        Assert.Contains("src/Pay.cs", page);
+    }
+
+    [Fact]
     public async Task Invalid_pr_reference_shows_an_error()
     {
         var html = await (await Post("/track", ("csrf", Token), ("pr", "no-es-un-pr"), ("action", "sync"))).Content.ReadAsStringAsync();

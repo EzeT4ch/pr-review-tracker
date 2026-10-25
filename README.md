@@ -103,6 +103,7 @@ Desde el navegador (`http://127.0.0.1:5178`) podés:
 - ver la lista de PRs con filtros por estado y repo, y búsqueda;
 - abrir el detalle de un PR: sesiones con el comando para retomarlas, el último análisis del panel (hallazgos, preguntas), análisis anteriores, timeline y descripción;
 - abrir el reporte completo de cada análisis;
+- **ver el diff del PR** con cada hallazgo del panel debajo de la línea a la que apunta (los que no tienen línea dentro del diff aparecen arriba del archivo). Hay dos vistas: el diff actual, pedido a Bitbucket y guardado en caché unos minutos (o el del último análisis si no hay conexión), y el diff exacto que revisó cada análisis. Los archivos grandes empiezan plegados y los diffs enormes muestran un link a Bitbucket;
 - registrar notas, decisiones y tags (se exportan a Obsidian igual que desde la consola);
 - registrar un PR nuevo, actualizarlo desde Bitbucket o lanzar `analyze` eligiendo revisores y agente. Corren como tareas en segundo plano; la página se refresca sola mientras corren.
 
@@ -125,6 +126,10 @@ La revisión interactiva (`prt review`) sigue en la terminal, porque necesita un
 | Lista de PRs | Detalle de un PR | Reporte de un análisis |
 |---|---|---|
 | ![](docs/img/web-home.png) | ![](docs/img/web-pr.png) | ![](docs/img/web-run.png) |
+
+Diff del PR con los hallazgos sobre el código:
+
+![](docs/img/web-diff.png)
 
 La página **Repos** permite asociar un checkout local, volver al clon gestionado, actualizarlo o borrarlo:
 

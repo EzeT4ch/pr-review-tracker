@@ -197,8 +197,8 @@ public sealed class PanelService(
     private async Task<RunContext> WriteContextAsync(PullRequest pr, IReadOnlyList<PrCommit> commits, ReviewProfile profile,
         CheckoutInfo? code, ReviewRun run, CancellationToken ct)
     {
-        var dir = Path.Combine(runsRoot, ObsidianExporter.SafeName(pr.Workspace), ObsidianExporter.SafeName(pr.Repo),
-            pr.Number.ToString(System.Globalization.CultureInfo.InvariantCulture), run.Id.ToString(System.Globalization.CultureInfo.InvariantCulture));
+        // Kept after the run: the web panel shows the exact diff each run analysed.
+        var dir = Path.GetDirectoryName(UnifiedDiff.RunDiffPath(runsRoot, pr.Ref, run.Id))!;
         Directory.CreateDirectory(dir);
 
         var hasDiff = false;

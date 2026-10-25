@@ -114,5 +114,14 @@ internal static class Html
         textarea{width:100%;min-height:90px}button{cursor:pointer;background:var(--card)}button.primary{background:var(--link);color:#fff;border-color:var(--link)}
         .job{padding:8px 12px;border-radius:6px;margin:12px 0;border:1px solid var(--line)}.job-running{border-color:var(--blue)}.job-failed{border-color:var(--red)}
         .log{font:12px ui-monospace,Consolas,monospace;white-space:pre-wrap;margin:6px 0 0}
+        table.files{width:auto}.files td{padding:3px 12px 3px 0}.add-n{color:var(--green)}.del-n{color:var(--red)}
+        details.file{border:1px solid var(--line);border-radius:6px;margin:12px 0}details.file>summary{padding:8px 12px;background:var(--card);border-radius:6px}
+        table.diff{margin:0;font:12px/1.45 ui-monospace,Consolas,monospace;table-layout:fixed}
+        table.diff td{border:0;padding:0 8px;white-space:pre-wrap;word-break:break-all}
+        table.diff col.ln{width:52px}table.diff td.ln{text-align:right;color:var(--muted);user-select:none}
+        .diff .add{background:rgba(46,160,67,.15)}.diff .del{background:rgba(248,81,73,.15)}
+        .diff .hunk td{color:var(--muted);background:var(--card);padding:4px 8px}.diff .note td{color:var(--muted)}
+        .sign{display:inline-block;width:14px;color:var(--muted);user-select:none}
+        .finding-note{font:13px/1.5 system-ui,sans-serif;white-space:normal;word-break:normal;border-left:3px solid var(--orange);background:var(--card);padding:6px 10px;margin:4px 0}
         """;
 }

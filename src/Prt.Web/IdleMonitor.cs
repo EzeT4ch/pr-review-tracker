@@ -7,7 +7,7 @@ namespace Prt.Web;
 /// Puts the server to sleep after a period without requests: closes pooled SQLite connections and
 /// returns memory to the OS. While asleep nothing runs (no timer); the next request wakes it up.
 /// </summary>
-public sealed class IdleMonitor(TimeSpan sleepAfter, Func<bool> busy, TimeProvider? clock = null)
+public sealed class IdleMonitor(TimeSpan sleepAfter, Func<bool> busy, TimeProvider? clock = null, Action? onSleep = null)
 {
     private readonly TimeProvider _clock = clock ?? TimeProvider.System;
     private readonly Lock _lock = new();
@@ -63,6 +63,7 @@ public sealed class IdleMonitor(TimeSpan sleepAfter, Func<bool> busy, TimeProvid
                     _wake = new TaskCompletionSource(TaskCreationOptions.RunContinuationsAsynchronously);
                     wake = _wake.Task;
                 }
+                onSleep?.Invoke();
                 Trim();
                 await wake.WaitAsync(ct);
             }

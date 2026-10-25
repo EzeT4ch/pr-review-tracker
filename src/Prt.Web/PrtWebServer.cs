@@ -40,14 +40,15 @@ public static class PrtWebServer
         });
 
         var jobs = new JobRunner();
-        var idle = new IdleMonitor(options.SleepAfter, () => jobs.Busy, context.Clock);
+        var diffs = new DiffCache(context.Clock);
+        var idle = new IdleMonitor(options.SleepAfter, () => jobs.Busy, context.Clock, diffs.Clear);
         builder.Services.AddSingleton(jobs);
         builder.Services.AddSingleton(idle);
         builder.Services.AddHostedService(_ => new IdleService(idle));
 
         var app = builder.Build();
         var started = DateTimeOffset.Now;
-        var pages = new Pages(context, jobs, options.Token);
+        var pages = new Pages(context, jobs, options.Token, diffs);
 
         app.Use(async (http, next) =>
         {
@@ -102,6 +103,12 @@ public static class PrtWebServer
 
         app.MapGet("/pr/{ws}/{repo}/{n:int}/run/{id:long}", (HttpContext http, string ws, string repo, int n, long id) =>
             Write(http, pages.Run(new PrRef(ws, repo, n), id)));
+
+        app.MapGet("/pr/{ws}/{repo}/{n:int}/diff", async (HttpContext http, string ws, string repo, int n) =>
+            Write(http, await pages.Diff(new PrRef(ws, repo, n), http.Request.Query["refresh"] == "1")));
+
+        app.MapGet("/pr/{ws}/{repo}/{n:int}/run/{id:long}/diff", (HttpContext http, string ws, string repo, int n, long id) =>
+            Write(http, pages.RunDiff(new PrRef(ws, repo, n), id)));
 
         app.MapPost("/pr/{ws}/{repo}/{n:int}/memo", async (HttpContext http, string ws, string repo, int n) =>
         {
