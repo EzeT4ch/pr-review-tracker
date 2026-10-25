@@ -26,6 +26,8 @@ prt init                       # interactivo: vault, carpeta, agente por defecto
 prt map acme/payments ~/src/payments   # checkout local donde corre el agente para ese repo
 ```
 
+Si un repo no tiene checkout asociado, `prt review` y `prt analyze` preguntan si querés asociarlo. Si los corrés desde dentro de un clon de ese repo (detectado por el remoto de Bitbucket, también desde subcarpetas o worktrees), lo proponen directamente.
+
 Bitbucket Cloud: creá un **API token** de Atlassian con permiso de lectura de pull requests y repositorios, y usá tu email de Atlassian como usuario (también funcionan usuario + app password). Las variables `PRT_BB_USER` y `PRT_BB_TOKEN` tienen prioridad sobre el config.
 
 | Qué | Dónde |

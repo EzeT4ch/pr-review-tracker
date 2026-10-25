@@ -34,7 +34,9 @@ internal static class PanelCommands
             var names = result.GetValue(reviewers)?
                 .SelectMany(r => r.Split(',', StringSplitOptions.RemoveEmptyEntries | StringSplitOptions.TrimEntries))
                 .Select(r => r.ToLowerInvariant()).Distinct().ToList();
-            var outcome = await app.Panel.AnalyzeAsync(PrRef.Parse(result.GetValue(pr)!),
+            var prRef = PrRef.Parse(result.GetValue(pr)!);
+            app.EnsureCheckout(prRef);
+            var outcome = await app.Panel.AnalyzeAsync(prRef,
                 new PanelOptions(names, result.GetValue(agent), result.GetValue(fresh), result.GetValue(parallel)), ct);
 
             AnsiConsole.WriteLine();
