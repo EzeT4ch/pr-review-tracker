@@ -1,6 +1,15 @@
 ﻿using System.CommandLine;
+using System.Text;
 using Prt.Cli.Commands;
 using Spectre.Console;
+
+// The Windows console defaults to an OEM code page (accents come out as '?'). This must run before
+// AnsiConsole is first used, because Spectre reads the encoding when it creates the console.
+if (OperatingSystem.IsWindows())
+{
+    Console.OutputEncoding = Encoding.UTF8;
+    Console.InputEncoding = Encoding.UTF8;
+}
 
 // Without a terminal the detected width can be 0, which collapses every table and line.
 if (Console.IsOutputRedirected || AnsiConsole.Profile.Width < 40)

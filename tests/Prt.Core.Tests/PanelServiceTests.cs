@@ -98,7 +98,10 @@ public sealed class PanelServiceTests : IDisposable
         Assert.Contains("## Panel de revisores", note);
         Assert.Contains("| 🟠 | SEC-1 | security | Hallazgo SEC-1 | `src/Pay.cs:12` |", note);
         Assert.Contains("panel_verdict: \"CAMBIOS REQUERIDOS\"", note);
-        var runNote = Directory.GetFiles(Path.Combine(_config.VaultPath!, "PR Reviews", "acme", "api", "PR-42")).Single();
+        var prFolder = Path.Combine(_config.VaultPath!, "PR Reviews", "acme", "api", "PR-42");
+        Assert.Equal(prFolder, Path.GetDirectoryName(outcome.NotePath));
+        var runNote = Directory.GetFiles(prFolder, "Análisis*.md").Single();
+        Assert.Contains("PR: [[PR Reviews/acme/api/PR-42/PR-42 - Agregar pagos con QR|", File.ReadAllText(runNote));
         var report = File.ReadAllText(runNote);
         Assert.Contains("## Resultado: **CAMBIOS REQUERIDOS**", report);
         Assert.Contains("### 🟠 SEC-1 · Hallazgo SEC-1", report);
@@ -132,7 +135,8 @@ public sealed class PanelServiceTests : IDisposable
         Assert.Equal("APROBAR", second.Pr.Verdict);
         var note = File.ReadAllText(second.NotePath!);
         Assert.Contains("Análisis anteriores:", note);
-        Assert.Equal(2, Directory.GetFiles(Path.Combine(_config.VaultPath!, "PR Reviews", "acme", "api", "PR-42")).Length);
+        // The PR folder holds the main note plus one report per run.
+        Assert.Equal(3, Directory.GetFiles(Path.Combine(_config.VaultPath!, "PR Reviews", "acme", "api", "PR-42")).Length);
     }
 
     [Fact]

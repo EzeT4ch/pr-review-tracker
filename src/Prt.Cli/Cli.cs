@@ -18,7 +18,7 @@ internal static class Cli
         catch (Exception ex) when (ex is UserException or FormatException or AgentException or BitbucketException
                                        or ArgumentException or InvalidOperationException or HttpRequestException)
         {
-            AnsiConsole.MarkupLine($"[red]✗[/] {Markup.Escape(ex.Message)}");
+            AnsiConsole.MarkupLine($"{Symbols.Fail} {Markup.Escape(ex.Message)}");
             return 1;
         }
         catch (OperationCanceledException)

@@ -122,7 +122,9 @@ Los prompts (`prompts.initial`, `prompts.reReview`, `prompts.summary`) también 
 <vault>/PR Reviews/
 ├── Index.md                          # tabla por estado + consulta Dataview
 └── acme/payments/
-    └── PR-42 - Agregar pagos QR.md
+    └── PR-42/                                # una carpeta por PR
+        ├── PR-42 - Agregar pagos QR.md       # nota principal
+        └── Análisis 2026-10-25 1403 (run 3).md   # un reporte por cada `prt analyze`
 ```
 
 Cada nota tiene:
@@ -131,7 +133,9 @@ Cada nota tiene:
 - **Sesiones**, **Pendientes** (del último memo del agente) y **Timeline** con cada ronda: prompt enviado, memo del agente y tus notas, en callouts.
 - Lo generado va entre `<!-- prt:begin -->` y `<!-- prt:end -->`. **Todo lo que escribas fuera de esos marcadores se conserva** al regenerar (por ejemplo, la sección "Notas libres"). El frontmatter se regenera siempre. Si cambia el título del PR, la nota se renombra.
 
-La base SQLite es la fuente de verdad: `prt export` regenera el vault en cualquier momento.
+La base SQLite es la fuente de verdad: `prt export` regenera el vault en cualquier momento. Las notas creadas con versiones anteriores a la 0.3 (fuera de la carpeta del PR) se mueven solas a su carpeta en el siguiente export.
+
+En la consola clásica de Windows (sin Windows Terminal), `prt` usa texto en lugar de emojis (`BLOQ`, `IMP`, `MEN`, `INFO`). Para forzarlo en cualquier terminal: `PRT_ASCII=1`.
 
 ## Desarrollo
 

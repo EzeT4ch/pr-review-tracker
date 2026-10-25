@@ -22,7 +22,7 @@ internal static class HistoryCommands
                 return Task.CompletedTask;
             }
 
-            var table = new Table().Border(TableBorder.Rounded)
+            var table = new Table().Border(Symbols.Border)
                 .AddColumns("PR", "Título", "Autor", "Estado", "Veredicto", "Sesiones", "Rondas", "Actividad");
             foreach (var pr in prs)
             {
