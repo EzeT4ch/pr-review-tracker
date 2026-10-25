@@ -142,4 +142,4 @@ Revisás que ningún dato de tarjeta (PAN, CVV) se almacene, loguee o viaje sin 
 - `reviewers`: cuáles corren por defecto y en qué orden. Los demás se pueden pedir con `prt analyze -r`.
 - `agents`: agente por revisor; pisa el `agent` del archivo del revisor.
 
-`prt reviewers init <ws/repo>` copia todo lo incorporado a `.prt/` para empezar a editar (con `--scope user` o `--scope global` va a las otras capas). `prt reviewers list <ws/repo>` muestra qué revisor aplica y de qué archivo sale.
+Desde el panel web (Revisores, o Repos → Revisores del proyecto) se editan los revisores de la capa global, personal o del repo, sin tocar archivos a mano. `prt reviewers init <ws/repo>` copia todo lo incorporado a `.prt/` para empezar a editar (con `--scope user` o `--scope global` va a las otras capas). `prt reviewers list <ws/repo>` muestra qué revisor aplica y de qué archivo sale.

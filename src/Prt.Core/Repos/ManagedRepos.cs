@@ -46,6 +46,10 @@ public sealed partial class ManagedRepos(string root, BitbucketSettings settings
         return Directory.Exists(dir) ? Directory.GetDirectories(dir).Select(Path.GetFileName).OfType<string>().Order().ToList() : [];
     }
 
+    /// <summary>Any prepared worktree of the repo (to read its committed .prt/ settings), or null.</summary>
+    public string? AnyWorktree(string repoKey) =>
+        Worktrees(repoKey).Select(name => Path.Combine(RepoDir(repoKey), "worktrees", name)).FirstOrDefault();
+
     public long SizeBytes(string repoKey)
     {
         var dir = RepoDir(repoKey);

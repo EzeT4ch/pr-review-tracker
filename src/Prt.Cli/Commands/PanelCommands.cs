@@ -118,7 +118,7 @@ internal static class PanelCommands
             var repoKey = result.GetValue(repo)?.Trim();
             var profile = repoKey is null
                 ? ProfileLoader.Load([ProfileLoader.GlobalDir])
-                : ProfileLoader.Load(repoKey, app.Config.RepoPathFor(repoKey));
+                : ProfileLoader.Load(repoKey, ProfileCheckout(app, repoKey));
 
             var table = new Table().Border(Symbols.Border).AddColumns("Revisor", "Título", "Prefijo", "Agente", "Activo", "Origen");
             foreach (var r in profile.Reviewers)
@@ -133,8 +133,8 @@ internal static class PanelCommands
             app.Ui.Info(profile.Layers.Count == 0
                 ? "Solo estándares incorporados. Personalizalos con `prt reviewers init`."
                 : "Capas aplicadas: " + string.Join(" → ", profile.Layers));
-            if (repoKey is not null && app.Config.RepoPathFor(repoKey) is null)
-                app.Ui.Warn($"{repoKey} no tiene checkout asociado: no se leen sus archivos .prt/ (`prt map {repoKey} <ruta>`).");
+            if (repoKey is not null && ProfileCheckout(app, repoKey) is null)
+                app.Ui.Warn($"{repoKey} no tiene checkout local ni clon gestionado todavía: no se leen sus archivos .prt/ del repo.");
             return Task.CompletedTask;
         }));
         return command;
@@ -176,6 +176,10 @@ internal static class PanelCommands
         }));
         return command;
     }
+
+    /// <summary>Where the repo's committed .prt/ is read from: the local checkout, else the managed clone.</summary>
+    private static string? ProfileCheckout(App app, string repoKey) =>
+        app.Config.RepoPathFor(repoKey) ?? (app.Config.ManagedClones ? app.Managed.AnyWorktree(repoKey) : null);
 
     private static void RenderRun(PullRequest pr, RunView view)
     {

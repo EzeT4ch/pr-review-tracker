@@ -22,6 +22,14 @@ public sealed record ReviewerDefinition
     public string Source { get; init; } = ProfileLoader.BuiltInSource;
 }
 
+public enum ProfileLayer
+{
+    BuiltIn,
+    Global,
+    Repo,
+    User,
+}
+
 /// <summary>project/.prt/review.json</summary>
 public sealed class ProjectReviewSettings
 {
@@ -49,6 +57,12 @@ public sealed record ReviewProfile(
     int MaxParallel,
     IReadOnlyList<string> Layers)
 {
+    /// <summary>The <c>reviewers</c> list of review.json, when a layer defines it (it decides which run and their order).</summary>
+    public IReadOnlyList<string>? ExplicitReviewers { get; init; }
+
+    /// <summary>The <c>agents</c> map of review.json (reviewer → agent), which wins over the reviewer files.</summary>
+    public IReadOnlyDictionary<string, string> AgentOverrides { get; init; } = new Dictionary<string, string>();
+
     /// <summary>Reviewers to run: the requested names, or the enabled ones.</summary>
     public IReadOnlyList<ReviewerDefinition> Select(IReadOnlyCollection<string>? names)
     {
@@ -76,7 +90,7 @@ public static class ProfileLoader
     public const string BuiltInSource = "incorporado";
     public const string FolderName = ".prt";
 
-    private static readonly JsonSerializerOptions JsonOptions = new()
+    internal static readonly JsonSerializerOptions JsonOptions = new()
     {
         PropertyNamingPolicy = JsonNamingPolicy.CamelCase,
         PropertyNameCaseInsensitive = true,
@@ -88,19 +102,35 @@ public static class ProfileLoader
 
     public static string GlobalDir => PrtPaths.ConfigDir;
 
-    public static string UserProjectDir(string repoKey) =>
-        Path.Combine(PrtPaths.ConfigDir, "projects", Path.Combine(repoKey.Split('/')));
+    public static string UserProjectDir(string repoKey, string? configDir = null) =>
+        Path.Combine(configDir ?? PrtPaths.ConfigDir, "projects", Path.Combine(repoKey.Split('/')));
 
     public static string? RepoDir(string? checkout) => checkout is null ? null : Path.Combine(checkout, FolderName);
 
     /// <summary>Layer folders, lowest priority first (they may not exist).</summary>
-    public static IReadOnlyList<string> LayerDirs(string repoKey, string? checkout)
+    public static IReadOnlyList<string> LayerDirs(string repoKey, string? checkout, string? configDir = null)
     {
-        var dirs = new List<string> { GlobalDir };
+        var dirs = new List<string> { configDir ?? GlobalDir };
         if (RepoDir(checkout) is { } repo)
             dirs.Add(repo);
-        dirs.Add(UserProjectDir(repoKey));
+        dirs.Add(UserProjectDir(repoKey, configDir));
         return dirs;
+    }
+
+    /// <summary>Which layer a reviewer's <see cref="ReviewerDefinition.Source"/> belongs to.</summary>
+    public static ProfileLayer LayerOf(string source, string globalDir, string? repoDir, string? userProjectDir)
+    {
+        if (source == BuiltInSource)
+            return ProfileLayer.BuiltIn;
+        bool Under(string? dir) => dir is not null &&
+            Path.GetFullPath(source).StartsWith(Path.GetFullPath(dir) + Path.DirectorySeparatorChar,
+                OperatingSystem.IsWindows() ? StringComparison.OrdinalIgnoreCase : StringComparison.Ordinal);
+        // Most specific first: the user project folder lives inside the global one.
+        if (Under(userProjectDir))
+            return ProfileLayer.User;
+        if (Under(repoDir))
+            return ProfileLayer.Repo;
+        return ProfileLayer.Global;
     }
 
     public static ReviewProfile Load(string repoKey, string? checkout) => Load(LayerDirs(repoKey, checkout));
@@ -187,7 +217,11 @@ public static class ProfileLoader
             settings.ContextFiles ?? [],
             settings.DefaultAgent,
             Math.Clamp(settings.MaxParallel ?? 4, 1, 16),
-            usedLayers);
+            usedLayers)
+        {
+            ExplicitReviewers = settings.Reviewers,
+            AgentOverrides = settings.Agents ?? new Dictionary<string, string>(),
+        };
     }
 
     /// <summary>Copies the built-in standards, context template, settings and reviewers into a layer folder.</summary>
@@ -241,7 +275,7 @@ public static class ProfileLoader
         };
     }
 
-    private static ProjectReviewSettings ParseSettings(string json, string path)
+    internal static ProjectReviewSettings ParseSettings(string json, string path)
     {
         try
         {

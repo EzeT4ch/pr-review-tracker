@@ -156,6 +156,8 @@ public sealed class PanelServiceTests : IDisposable
         Assert.Equal(session.AgentSessionId, resume[resume.IndexOf("--resume") + 1]);
         var prompt = resume[^1];
         Assert.Contains("c2full arregla auth", prompt);
+        // The current focus is restated, so edits to a reviewer reach resumed sessions.
+        Assert.Contains("## Tu foco (vigente)", prompt);
         var previous = Regex.Match(prompt, @"Tus hallazgos anteriores: `([^`]+)`").Groups[1].Value;
         Assert.Contains("SEC-1", File.ReadAllText(previous));
 

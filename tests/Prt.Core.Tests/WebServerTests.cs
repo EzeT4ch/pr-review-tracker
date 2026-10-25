@@ -4,6 +4,7 @@ using Microsoft.AspNetCore.Builder;
 using Prt.Core.Agents;
 using Prt.Core.Config;
 using Prt.Core.Domain;
+using Prt.Core.Panel;
 using Prt.Core.Storage;
 using Prt.Web;
 
@@ -38,6 +39,7 @@ public sealed class WebServerTests : IAsyncLifetime
         {
             LoadConfig = () => _config,
             SaveConfig = _ => _saves++,
+            ConfigDir = Path.Combine(_dir.Path, "cfg"),
             DatabasePath = _db,
             RunsRoot = Path.Combine(_dir.Path, "runs"),
             ReposRoot = Path.Combine(_dir.Path, "repos"),
@@ -251,6 +253,75 @@ public sealed class WebServerTests : IAsyncLifetime
 
         Assert.Contains("No se pudo consultar Bitbucket", page);
         Assert.Contains("src/Pay.cs", page);
+    }
+
+    [Fact]
+    public async Task Reviewers_are_edited_per_project_or_globally()
+    {
+        await Post("/track", ("csrf", Token), ("pr", "acme/api#42"), ("action", "sync"));
+        await WaitForJob(Ref);
+        var cfg = Path.Combine(_dir.Path, "cfg");
+
+        var list = await _http.GetStringAsync("/repos/acme/api/reviewers");
+        Assert.Contains("Revisores de acme/api", list);
+        Assert.Contains("incorporado", list);
+        var form = await _http.GetStringAsync("/repos/acme/api/reviewers/edit?name=performance");
+        Assert.Contains("Personal para este proyecto", form);
+        Assert.DoesNotContain("value=\"repo\"", form);
+
+        // Disable performance and switch security to codex, only for this project.
+        Assert.Equal(HttpStatusCode.Forbidden, (await Post("/repos/acme/api/reviewers/save", ("name", "performance"))).StatusCode);
+        var saved = await (await Post("/repos/acme/api/reviewers/save", ("csrf", Token), ("new", "0"), ("name", "performance"),
+            ("title", "Performance"), ("id_prefix", "PERF"), ("order", "3"), ("agent", ""), ("instructions", "Solo consultas SQL."), ("target", "user"))).Content.ReadAsStringAsync();
+        Assert.Contains("guardado en", saved);
+        Assert.True(File.Exists(Path.Combine(cfg, "projects", "acme", "api", "reviewers", "performance.md")));
+
+        var project = ProfileLoader.Load(ProfileLoader.LayerDirs("acme/api", null, cfg));
+        Assert.DoesNotContain(project.Select(null), r => r.Name == "performance");
+        Assert.Equal("Solo consultas SQL.", project.Reviewers.Single(r => r.Name == "performance").Instructions);
+        Assert.Contains("personal", await _http.GetStringAsync("/repos/acme/api/reviewers"));
+        // Other projects and the global view are untouched.
+        Assert.Contains(ProfileLoader.Load([cfg]).Select(null), r => r.Name == "performance");
+
+        // New reviewer, invalid first, then valid.
+        var invalid = await (await Post("/repos/acme/api/reviewers/save", ("csrf", Token), ("new", "1"), ("name", "PCI!"),
+            ("title", "PCI"), ("id_prefix", "PCI"), ("instructions", "x"), ("target", "user"), ("enabled", "on"))).Content.ReadAsStringAsync();
+        Assert.Contains("minúsculas", invalid);
+        await Post("/repos/acme/api/reviewers/save", ("csrf", Token), ("new", "1"), ("name", "pci"),
+            ("title", "Cumplimiento PCI"), ("id_prefix", "pci"), ("order", "5"), ("agent", "codex"), ("instructions", "Datos de tarjeta."), ("target", "user"), ("enabled", "on"));
+        var pci = ProfileLoader.Load(ProfileLoader.LayerDirs("acme/api", null, cfg)).Reviewers.Single(r => r.Name == "pci");
+        Assert.Equal(("PCI", "codex", true), (pci.IdPrefix, pci.Agent, pci.Enabled));
+
+        // Removing the personalization brings back the inherited reviewer.
+        await Post("/repos/acme/api/reviewers/remove", ("csrf", Token), ("name", "performance"), ("target", "user"));
+        Assert.Contains(ProfileLoader.Load(ProfileLoader.LayerDirs("acme/api", null, cfg)).Select(null), r => r.Name == "performance");
+
+        // Global edits land in the config folder and apply to every project.
+        await Post("/reviewers/save", ("csrf", Token), ("new", "0"), ("name", "bugs"), ("title", "Bugs"), ("id_prefix", "BUG"),
+            ("order", "2"), ("agent", "opencode"), ("instructions", "Bugs globales."), ("target", "global"), ("enabled", "on"));
+        Assert.True(File.Exists(Path.Combine(cfg, "reviewers", "bugs.md")));
+        Assert.Equal("opencode", ProfileLoader.Load(ProfileLoader.LayerDirs("otro/repo", null, cfg)).Reviewers.Single(r => r.Name == "bugs").Agent);
+        Assert.Contains("global (heredado)", await _http.GetStringAsync("/repos/acme/api/reviewers"));
+    }
+
+    [Fact]
+    public async Task Repo_layer_needs_a_local_checkout()
+    {
+        await Post("/track", ("csrf", Token), ("pr", "acme/api#42"), ("action", "sync"));
+        await WaitForJob(Ref);
+        var checkout = Directory.CreateDirectory(Path.Combine(_dir.Path, "checkout")).FullName;
+
+        var rejected = await (await Post("/repos/acme/api/reviewers/save", ("csrf", Token), ("new", "0"), ("name", "security"),
+            ("title", "Seguridad"), ("id_prefix", "SEC"), ("instructions", "x"), ("target", "repo"), ("enabled", "on"))).Content.ReadAsStringAsync();
+        Assert.Contains("Elegí dónde guardar", rejected);
+
+        _config.RepoPaths["acme/api"] = checkout;
+        Assert.Contains("value=\"repo\"", await _http.GetStringAsync("/repos/acme/api/reviewers/edit?name=security"));
+        await Post("/repos/acme/api/reviewers/save", ("csrf", Token), ("new", "0"), ("name", "security"),
+            ("title", "Seguridad del equipo"), ("id_prefix", "SEC"), ("instructions", "Reglas del equipo."), ("target", "repo"), ("enabled", "on"));
+
+        Assert.True(File.Exists(Path.Combine(checkout, ".prt", "reviewers", "security.md")));
+        Assert.Contains("repo (.prt/)", await _http.GetStringAsync("/repos/acme/api/reviewers"));
     }
 
     [Fact]

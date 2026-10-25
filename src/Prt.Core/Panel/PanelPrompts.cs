@@ -76,7 +76,9 @@ public static class PanelPrompts
         sb.Append(hasPrevious
             ? "Para cada hallazgo anterior indicá `status` `still_open` o `resolved` conservando su `id`; agregá los nuevos con `status` `new`.\n"
             : "Reportá todos los hallazgos vigentes.\n");
-        sb.Append("Mantené tu foco y el estándar de revisión de la primera pasada.\n\n");
+        // Always restated: the reviewer may have been edited since the session started.
+        sb.Append("## Tu foco (vigente)\n").Append(reviewer.Instructions.Trim()).Append("\n\n");
+        sb.Append("Mantené el estándar de revisión de la primera pasada.\n\n");
         sb.Append("## Formato de respuesta\n").Append(ReviewStandard.ResponseFormat(reviewer.Name, reviewer.IdPrefix));
         return sb.ToString();
     }

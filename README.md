@@ -147,6 +147,87 @@ La página **Repos** permite asociar un checkout local, volver al clon gestionad
 
 El estándar completo (severidades, veredicto, contrato JSON, estructura del reporte y personalización) está en [docs/REVIEW_STANDARD.md](docs/REVIEW_STANDARD.md).
 
+### Configurar los revisores (global y por proyecto)
+
+Cada proyecto usa por defecto la **configuración global** de prt. Solo hace falta tocar un proyecto cuando necesita algo distinto. La configuración se arma por capas, de menor a mayor prioridad; cada capa reemplaza a la anterior revisor por revisor:
+
+| Capa | Dónde | Para qué |
+|---|---|---|
+| Incorporada | dentro de prt | Los cuatro revisores estándar: `architecture`, `bugs`, `performance` y `security` |
+| **Global** | `~/.config/prt/` (Windows: `%APPDATA%\prt\`) | Tus reglas para **todos** los proyectos. Es el default |
+| Repo | `<checkout>/.prt/` | Reglas del proyecto para el **equipo**: se commitean con el código. También se leen del clon gestionado |
+| Personal del proyecto | `~/.config/prt/projects/<ws>/<repo>/` | Ajustes tuyos para un proyecto, sin commitear |
+
+Un proyecto sin archivos propios usa exactamente la configuración global. Si personalizás un revisor en un proyecto, los demás revisores siguen viniendo de la capa global.
+
+Para ver qué aplica y de dónde sale cada revisor: `prt reviewers list <ws/repo>` (sin repo, muestra la configuración global).
+
+#### Desde el panel web
+
+- **Revisores** (en el menú): editás los revisores **globales**.
+- **Repos → Revisores del proyecto** (también desde "configurar revisores" en el detalle de un PR): ves los revisores efectivos del proyecto con su origen (incorporado, global heredado, repo o personal) y los editás.
+- **Qué se puede cambiar** de cada revisor: si está activo (es decir, si corre por defecto en `analyze`), el agente que lo ejecuta, el orden, el título, el prefijo de sus hallazgos y las instrucciones (su foco). También podés crear revisores nuevos.
+- **Dónde se guarda**, lo elegís al guardar:
+  - en un proyecto, **personal** (por defecto) o **repo** (`<checkout>/.prt/`, para commitear). La opción repo aparece solo si el repo tiene un checkout local asociado;
+  - en la vista global, siempre en la capa **global**.
+- **Volver a lo heredado**: el botón "Quitar la personalización" (o "Volver al revisor incorporado" en la vista global) borra el archivo de esa capa y vuelve a aplicar la configuración de abajo.
+
+El panel escribe los mismos archivos que editarías a mano, así que se pueden revisar y versionar.
+
+| Revisores de un proyecto | Edición de un revisor |
+|---|---|
+| ![](docs/img/web-reviewers.png) | ![](docs/img/web-reviewer-edit.png) |
+
+#### Con archivos
+
+```bash
+prt reviewers init acme/payments                 # copia todo a <checkout>/.prt/ (para el equipo)
+prt reviewers init acme/payments --scope user    # a tu carpeta personal del proyecto
+prt reviewers init --scope global                # a la configuración global
+```
+
+Cada revisor es `reviewers/<nombre>.md`: un frontmatter con sus datos y, debajo, las instrucciones:
+
+```markdown
+---
+name: security
+title: Seguridad
+id_prefix: SEC
+agent: codex        # opcional; sin esto usa el default del proyecto o el global
+enabled: true       # false: no corre por defecto (se puede pedir con -r security)
+order: 4
+---
+Revisás el cambio desde la seguridad…
+```
+
+`review.json` (opcional, en cualquier capa) ajusta el panel:
+
+```json
+{
+  "reviewers": ["architecture", "bugs", "security"],
+  "defaultAgent": "claude",
+  "agents": { "security": "codex" },
+  "maxParallel": 4,
+  "contextFiles": ["docs/ARCHITECTURE.md"]
+}
+```
+
+- `reviewers`: qué revisores corren por defecto y en qué orden. Tiene prioridad sobre `enabled` y `order`.
+- `agents`: el agente de cada revisor. Tiene prioridad sobre el `agent` del archivo.
+
+Cuando editás desde la web y alguna capa define `reviewers` o `agents`, prt actualiza también el `review.json` de la capa donde guardás, para que el cambio tenga efecto.
+
+Los cambios valen desde el próximo `analyze`, incluso para revisores con sesión abierta: cada pasada le recuerda al agente su foco vigente.
+
+En cualquier capa también se pueden poner `standards.md` (reemplaza el estándar de revisión) y `context.md` (dominio, arquitectura, qué no reportar). El `context.md` se **acumula** entre capas en lugar de reemplazarse.
+
+**Ejemplos**
+
+- *Desactivar performance en un repo, solo para vos:* Repos → Revisores del proyecto → performance → destildar "Activo" → guardar en *personal*.
+- *Seguridad con Codex en un proyecto y con Claude en el resto:* en ese proyecto, security → agente `codex` → guardar en *personal*, o en *repo* si es una decisión del equipo.
+- *Un revisor PCI para todo el equipo de pagos:* en el proyecto, "+ Nuevo revisor" → `pci`, prefijo `PCI`, instrucciones → guardar en *repo* y commitear `.prt/reviewers/pci.md`.
+- *Cambiar el foco de bugs en todos tus proyectos:* Revisores (global) → bugs → editar instrucciones → guardar.
+
 ## Agentes
 
 | Agente | Sesión nueva | Cómo se obtiene el id | Retomar | Memo headless |

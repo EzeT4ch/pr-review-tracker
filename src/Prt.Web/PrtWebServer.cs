@@ -159,6 +159,20 @@ public static class PrtWebServer
 
         app.MapGet("/jobs", (HttpContext http) => Write(http, pages.Jobs()));
 
+        app.MapGet("/reviewers", (HttpContext http) => Write(http, pages.Reviewers(null, null)));
+        app.MapGet("/reviewers/edit", (HttpContext http) =>
+            Write(http, pages.ReviewerForm(null, http.Request.Query["name"], http.Request.Query["new"] == "1")));
+        app.MapPost("/reviewers/save", async (HttpContext http) => Write(http, pages.SaveReviewer(null, await http.Request.ReadFormAsync())));
+        app.MapPost("/reviewers/remove", async (HttpContext http) => Write(http, pages.RemoveReviewer(null, await http.Request.ReadFormAsync())));
+
+        app.MapGet("/repos/{ws}/{repo}/reviewers", (HttpContext http, string ws, string repo) => Write(http, pages.Reviewers($"{ws}/{repo}", null)));
+        app.MapGet("/repos/{ws}/{repo}/reviewers/edit", (HttpContext http, string ws, string repo) =>
+            Write(http, pages.ReviewerForm($"{ws}/{repo}", http.Request.Query["name"], http.Request.Query["new"] == "1")));
+        app.MapPost("/repos/{ws}/{repo}/reviewers/save", async (HttpContext http, string ws, string repo) =>
+            Write(http, pages.SaveReviewer($"{ws}/{repo}", await http.Request.ReadFormAsync())));
+        app.MapPost("/repos/{ws}/{repo}/reviewers/remove", async (HttpContext http, string ws, string repo) =>
+            Write(http, pages.RemoveReviewer($"{ws}/{repo}", await http.Request.ReadFormAsync())));
+
         app.MapGet("/repos", (HttpContext http) => Write(http, pages.Repos(null, null)));
 
         app.MapPost("/repos/{ws}/{repo}", async (HttpContext http, string ws, string repo) =>
@@ -272,7 +286,7 @@ public static class PrtWebServer
             var config = context.LoadConfig();
             using var store = context.OpenStore();
             var panel = new PanelService(config, store, context.Bitbucket(config), name => context.Agent(config, name),
-                context.Exporter(config), job, context.RunsRoot, context.Clock, checkouts: context.Checkouts(config));
+                context.Exporter(config), job, context.RunsRoot, context.Clock, context.LoadProfile, context.Checkouts(config));
             var outcome = await panel.AnalyzeAsync(job.Pr, panelOptions);
             job.Add($"Veredicto del panel: {(outcome.Verdict is { } v ? ReviewStandard.Label(v) : "sin reportes válidos")}");
         }

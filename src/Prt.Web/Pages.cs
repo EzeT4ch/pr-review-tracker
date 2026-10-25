@@ -131,7 +131,7 @@ internal sealed partial class Pages(WebContext context, JobRunner jobs, string t
         IReadOnlyList<ReviewerDefinition> reviewers;
         try
         {
-            reviewers = ProfileLoader.Load(pr.Ref.RepoKey, config.RepoPathFor(pr.Ref.RepoKey)).Reviewers;
+            reviewers = context.Profile(config, pr.Ref.RepoKey).Reviewers;
         }
         catch (ArgumentException ex)
         {
@@ -149,7 +149,8 @@ internal sealed partial class Pages(WebContext context, JobRunner jobs, string t
         foreach (var agent in AgentNames.All)
             sb.Append("<option>").Append(agent).Append("</option>");
         sb.Append("</select><label><input type=\"checkbox\" name=\"new\"> Sesiones nuevas</label>")
-            .Append("<button class=\"primary\">Analizar con el panel</button></form>");
+            .Append("<button class=\"primary\">Analizar con el panel</button>")
+            .Append("<a href=\"").Append(Html.Url("repos", pr.Ref.Workspace, pr.Ref.Repo, "reviewers")).Append("\">configurar revisores</a></form>");
     }
 
     private static void AppendPanel(StringBuilder sb, PrHistory h, string url)
@@ -317,6 +318,7 @@ internal sealed partial class Pages(WebContext context, JobRunner jobs, string t
                 sb.Append(Button(action, "update", "Actualizar clon ahora"));
             if (managed.Exists(repoKey))
                 sb.Append(Button(action, "delete", "Borrar clon gestionado"));
+            sb.Append("<a href=\"").Append(action).Append("/reviewers\">Revisores del proyecto</a>");
             sb.Append("</div></div>");
         }
         return Page("Repos", sb.ToString());

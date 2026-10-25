@@ -2,6 +2,7 @@ using Prt.Core.Agents;
 using Prt.Core.Bitbucket;
 using Prt.Core.Config;
 using Prt.Core.Export;
+using Prt.Core.Panel;
 using Prt.Core.Repos;
 using Prt.Core.Storage;
 
@@ -16,6 +17,9 @@ public sealed class WebContext
     /// <summary>Persists config changes made from the panel (checkout mappings).</summary>
     public required Action<PrtConfig> SaveConfig { get; init; }
 
+    /// <summary>prt's config folder: the global layer of the reviewers and the root of the per-user project layers.</summary>
+    public required string ConfigDir { get; init; }
+
     public required string DatabasePath { get; init; }
     public required string RunsRoot { get; init; }
     public required string ReposRoot { get; init; }
@@ -29,6 +33,18 @@ public sealed class WebContext
     public ManagedRepos Managed(PrtConfig config) => new(ReposRoot, config.Bitbucket);
 
     public ICheckoutProvider Checkouts(PrtConfig config) => new CheckoutResolver(config, Managed(config));
+
+    /// <summary>Checkout whose .prt/ applies: the local one, else the managed clone (read-only for edits).</summary>
+    public string? ProfileCheckout(PrtConfig config, string repoKey) =>
+        config.RepoPathFor(repoKey) ?? (config.ManagedClones ? Managed(config).AnyWorktree(repoKey) : null);
+
+    public ReviewProfile Profile(PrtConfig config, string repoKey) =>
+        ProfileLoader.Load(ProfileLoader.LayerDirs(repoKey, ProfileCheckout(config, repoKey), ConfigDir));
+
+    public ReviewProfile GlobalProfile() => ProfileLoader.Load([ConfigDir]);
+
+    public ReviewProfile LoadProfile(string repoKey, string? checkout) =>
+        ProfileLoader.Load(ProfileLoader.LayerDirs(repoKey, checkout, ConfigDir));
 
     public ObsidianExporter? Exporter(PrtConfig config) =>
         string.IsNullOrWhiteSpace(config.VaultPath)

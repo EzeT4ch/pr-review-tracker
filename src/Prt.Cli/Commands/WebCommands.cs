@@ -205,6 +205,7 @@ internal static class WebCommands
     {
         LoadConfig = () => ConfigStore.Load(),
         SaveConfig = config => ConfigStore.Save(config),
+        ConfigDir = PrtPaths.ConfigDir,
         DatabasePath = PrtPaths.DatabaseFile,
         RunsRoot = Path.Combine(PrtPaths.DataDir, "runs"),
         ReposRoot = App.ReposRoot,
