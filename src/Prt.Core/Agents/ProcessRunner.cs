@@ -1,4 +1,5 @@
 using System.Diagnostics;
+using System.Text;
 
 namespace Prt.Core.Agents;
 
@@ -25,10 +26,7 @@ public sealed class ProcessRunner : IProcessRunner
 
     public async Task<ProcessResult> RunCapturedAsync(string command, IReadOnlyList<string> args, string cwd, CancellationToken ct = default)
     {
-        var info = CreateStartInfo(command, args, cwd);
-        info.RedirectStandardInput = true;
-        info.RedirectStandardOutput = true;
-        info.RedirectStandardError = true;
+        var info = CreateCapturedStartInfo(command, args, cwd);
         using var process = Start(info, command);
         // Agents in print mode may wait for piped input otherwise.
         process.StandardInput.Close();
@@ -51,6 +49,21 @@ public sealed class ProcessRunner : IProcessRunner
                 "Se puede configurar la ruta en agents.<agente>.command del config.", ex);
         }
     }
+
+    // Without an explicit encoding .NET decodes with the console code page current at Process.Start (CP850 on
+    // a Spanish Windows), which the agent CLIs switch to UTF-8 on their own: parallel runs came out garbled or not.
+    internal static ProcessStartInfo CreateCapturedStartInfo(string command, IReadOnlyList<string> args, string cwd)
+    {
+        var info = CreateStartInfo(command, args, cwd);
+        info.RedirectStandardInput = true;
+        info.RedirectStandardOutput = true;
+        info.RedirectStandardError = true;
+        info.StandardOutputEncoding = Utf8;
+        info.StandardErrorEncoding = Utf8;
+        return info;
+    }
+
+    private static readonly UTF8Encoding Utf8 = new(encoderShouldEmitUTF8Identifier: false);
 
     internal static ProcessStartInfo CreateStartInfo(string command, IReadOnlyList<string> args, string cwd)
     {

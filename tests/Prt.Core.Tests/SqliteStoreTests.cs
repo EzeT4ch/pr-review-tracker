@@ -97,6 +97,31 @@ public class SqliteStoreTests
     }
 
     [Fact]
+    public void Rewrites_agent_text_of_one_pr_only_where_it_changes()
+    {
+        using var store = NewStore();
+        var pr = store.UpsertPullRequest(Pr(1));
+        var other = store.UpsertPullRequest(Pr(2));
+        store.AddMemo(pr.Id, null, MemoKinds.AgentSummary, "roto X");
+        store.AddMemo(pr.Id, null, MemoKinds.UserNote, "bien");
+        store.AddMemo(other.Id, null, MemoKinds.UserNote, "roto X");
+        var run = store.StartRun(pr.Id, null);
+        store.AddResult(new ReviewerResult { RunId = run.Id, Reviewer = "bugs", Agent = "claude", Status = ResultStatus.Ok, ReportJson = "{\"x\":\"X\"}", RawOutput = "X" });
+        store.AddResult(new ReviewerResult { RunId = run.Id, Reviewer = "security", Agent = "claude", Status = ResultStatus.Failed, Error = "sin cambio" });
+        static string Fix(string s) => s.Replace("X", "ok");
+
+        Assert.Equal(new TextRewrite(1, 1), store.RewriteText(Fix, pr.Id, dryRun: true));
+        Assert.Equal("roto X", store.ListMemos(pr.Id)[0].Body);
+
+        Assert.Equal(new TextRewrite(1, 1), store.RewriteText(Fix, pr.Id));
+        Assert.Equal(["roto ok", "bien"], store.ListMemos(pr.Id).Select(m => m.Body));
+        Assert.Equal("roto X", store.ListMemos(other.Id).Single().Body);
+        var bugs = store.ListRuns(pr.Id).Single().Results.First(r => r.Reviewer == "bugs");
+        Assert.Equal(("{\"x\":\"ok\"}", "ok"), (bugs.ReportJson, bugs.RawOutput));
+        Assert.Equal(new TextRewrite(0, 0), store.RewriteText(Fix, pr.Id));
+    }
+
+    [Fact]
     public void Reopening_a_database_file_keeps_data()
     {
         using var dir = new TempDir();

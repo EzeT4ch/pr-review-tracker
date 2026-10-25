@@ -1,4 +1,5 @@
 using System.Text.Json;
+using System.Text.Json.Nodes;
 using System.Text.Json.Serialization;
 
 namespace Prt.Core.Config;
@@ -183,7 +184,19 @@ public static class ConfigStore
     {
         path ??= PrtPaths.ConfigFile;
         Directory.CreateDirectory(Path.GetDirectoryName(path)!);
-        File.WriteAllText(path, JsonSerializer.Serialize(config, Options));
+        var json = JsonSerializer.SerializeToNode(config, Options)!.AsObject();
+        // Prompts left as the built-in ones are not written, so a newer prt can improve them.
+        if (json["prompts"] is JsonObject prompts)
+        {
+            foreach (var (name, value) in JsonSerializer.SerializeToNode(new PromptSettings(), Options)!.AsObject())
+            {
+                if (JsonNode.DeepEquals(prompts[name], value))
+                    prompts.Remove(name);
+            }
+            if (prompts.Count == 0)
+                json.Remove("prompts");
+        }
+        File.WriteAllText(path, json.ToJsonString(Options));
         // The file may hold the Bitbucket token.
         if (!OperatingSystem.IsWindows())
             File.SetUnixFileMode(path, UnixFileMode.UserRead | UnixFileMode.UserWrite);

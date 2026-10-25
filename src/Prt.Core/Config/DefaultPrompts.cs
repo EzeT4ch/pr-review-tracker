@@ -39,6 +39,11 @@ public static class DefaultPrompts
 
         ## Resumen
         ## Hallazgos
+        (una tabla Markdown con exactamente estas columnas:
+        `| ID | Sev. | Hallazgo | Ubicación | Acción |`
+        - ID: B1, B2… para bloqueantes, I1… para importantes, M1… para menores; Sev.: 🔴, 🟠 o 🟡;
+        - Hallazgo: una oración; Ubicación: `Archivo.cs:línea` en inline code, o vacía; Acción: hasta 10 palabras;
+        - una fila por hallazgo, sin saltos de línea ni listas dentro de una celda, y `|` escrito como `\|`)
         ## Riesgos de arquitectura
         ## Impacto de negocio
         ## Pendientes

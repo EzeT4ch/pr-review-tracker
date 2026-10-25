@@ -227,9 +227,5 @@ public static partial class ReportParser
 
     private static bool IsNullWord(string text) => text is "null" or "none" or "n/a" or "-";
 
-    private static string Truncate(string text, int max)
-    {
-        var line = text.ReplaceLineEndings(" ");
-        return line.Length <= max ? line : line[..(max - 1)].TrimEnd() + "…";
-    }
+    private static string Truncate(string text, int max) => Export.MarkdownText.Truncate(text, max);
 }
