@@ -2,19 +2,39 @@ name: CI
 
 on:
   push:
+    branches: [main, ccr-891e2797-j0jcpe]
   pull_request:
+  workflow_dispatch:
+
+# A newer push to the same branch makes the running build pointless.
+concurrency:
+  group: ci-${{ github.ref }}
+  cancel-in-progress: true
 
 jobs:
   build:
+    name: build (${{ matrix.os }})
     strategy:
+      fail-fast: false
       matrix:
-        os: [ubuntu-latest, windows-latest, macos-latest]
+        # Windows minutes cost double on private repos: only for PRs, manual runs and the default branch.
+        os: >-
+          ${{ fromJSON((github.event_name != 'push' || github.ref_name == github.event.repository.default_branch)
+          && '["ubuntu-latest","windows-latest"]' || '["ubuntu-latest"]') }}
     runs-on: ${{ matrix.os }}
+    timeout-minutes: 15
     steps:
       - uses: actions/checkout@v4
       - uses: actions/setup-dotnet@v4
         with:
           dotnet-version: 10.0.x
+          cache: true
+          cache-dependency-path: '**/*.csproj'
       - run: dotnet build -c Release
-      - run: dotnet test -c Release --no-build
+      - run: dotnet test -c Release --no-build --logger trx --results-directory TestResults
       - run: dotnet pack src/Prt.Cli -c Release --no-build
+      - uses: actions/upload-artifact@v4
+        if: failure()
+        with:
+          name: test-results-${{ matrix.os }}
+          path: TestResults
