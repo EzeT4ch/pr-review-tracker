@@ -267,12 +267,12 @@ public sealed class WebServerTests : IAsyncLifetime
         Assert.Contains("incorporado", list);
         var form = await _http.GetStringAsync("/repos/acme/api/reviewers/edit?name=performance");
         Assert.Contains("Personal para este proyecto", form);
-        Assert.DoesNotContain("value=\"repo\"", form);
+        Assert.DoesNotContain("value=\"repo:acme/api\"", form);
 
         // Disable performance and switch security to codex, only for this project.
         Assert.Equal(HttpStatusCode.Forbidden, (await Post("/repos/acme/api/reviewers/save", ("name", "performance"))).StatusCode);
         var saved = await (await Post("/repos/acme/api/reviewers/save", ("csrf", Token), ("new", "0"), ("name", "performance"),
-            ("title", "Performance"), ("id_prefix", "PERF"), ("order", "3"), ("agent", ""), ("instructions", "Solo consultas SQL."), ("target", "user"))).Content.ReadAsStringAsync();
+            ("title", "Performance"), ("id_prefix", "PERF"), ("order", "3"), ("agent", ""), ("instructions", "Solo consultas SQL."), ("target", "user:acme/api"))).Content.ReadAsStringAsync();
         Assert.Contains("guardado en", saved);
         Assert.True(File.Exists(Path.Combine(cfg, "projects", "acme", "api", "reviewers", "performance.md")));
 
@@ -285,15 +285,15 @@ public sealed class WebServerTests : IAsyncLifetime
 
         // New reviewer, invalid first, then valid.
         var invalid = await (await Post("/repos/acme/api/reviewers/save", ("csrf", Token), ("new", "1"), ("name", "PCI!"),
-            ("title", "PCI"), ("id_prefix", "PCI"), ("instructions", "x"), ("target", "user"), ("enabled", "on"))).Content.ReadAsStringAsync();
+            ("title", "PCI"), ("id_prefix", "PCI"), ("instructions", "x"), ("target", "user:acme/api"), ("enabled", "on"))).Content.ReadAsStringAsync();
         Assert.Contains("minúsculas", invalid);
         await Post("/repos/acme/api/reviewers/save", ("csrf", Token), ("new", "1"), ("name", "pci"),
-            ("title", "Cumplimiento PCI"), ("id_prefix", "pci"), ("order", "5"), ("agent", "codex"), ("instructions", "Datos de tarjeta."), ("target", "user"), ("enabled", "on"));
+            ("title", "Cumplimiento PCI"), ("id_prefix", "pci"), ("order", "5"), ("agent", "codex"), ("instructions", "Datos de tarjeta."), ("target", "user:acme/api"), ("enabled", "on"));
         var pci = ProfileLoader.Load(ProfileLoader.LayerDirs("acme/api", null, cfg)).Reviewers.Single(r => r.Name == "pci");
         Assert.Equal(("PCI", "codex", true), (pci.IdPrefix, pci.Agent, pci.Enabled));
 
         // Removing the personalization brings back the inherited reviewer.
-        await Post("/repos/acme/api/reviewers/remove", ("csrf", Token), ("name", "performance"), ("target", "user"));
+        await Post("/repos/acme/api/reviewers/remove", ("csrf", Token), ("name", "performance"), ("target", "user:acme/api"));
         Assert.Contains(ProfileLoader.Load(ProfileLoader.LayerDirs("acme/api", null, cfg)).Select(null), r => r.Name == "performance");
 
         // Global edits land in the config folder and apply to every project.
@@ -305,6 +305,44 @@ public sealed class WebServerTests : IAsyncLifetime
     }
 
     [Fact]
+    public async Task Global_view_can_save_a_reviewer_for_a_registered_project()
+    {
+        await Post("/track", ("csrf", Token), ("pr", "acme/api#42"), ("action", "sync"));
+        await WaitForJob(Ref);
+        var cfg = Path.Combine(_dir.Path, "cfg");
+
+        var form = await _http.GetStringAsync("/reviewers/edit?new=1");
+        Assert.Contains("value=\"global\"", form);
+        Assert.Contains("value=\"user:acme/api\"", form);
+        Assert.DoesNotContain("value=\"repo:acme/api\"", form);
+
+        var response = await Post("/reviewers/save", ("csrf", Token), ("new", "1"), ("name", "pci"), ("title", "PCI"),
+            ("id_prefix", "PCI"), ("order", "5"), ("agent", ""), ("instructions", "Datos de tarjeta."), ("target", "user:acme/api"), ("enabled", "on"));
+        Assert.Equal(HttpStatusCode.OK, response.StatusCode);
+        var saved = await response.Content.ReadAsStringAsync();
+
+        Assert.Contains("Revisores de acme/api", saved);
+        Assert.True(File.Exists(Path.Combine(cfg, "projects", "acme", "api", "reviewers", "pci.md")));
+        Assert.DoesNotContain(ProfileLoader.Load([cfg]).Reviewers, r => r.Name == "pci");
+        Assert.Contains(ProfileLoader.Load(ProfileLoader.LayerDirs("acme/api", null, cfg)).Reviewers, r => r.Name == "pci");
+
+        // Same name again in that project is a duplicate; globally it is not.
+        var duplicate = await (await Post("/reviewers/save", ("csrf", Token), ("new", "1"), ("name", "pci"), ("title", "PCI"),
+            ("id_prefix", "PCI"), ("instructions", "x"), ("target", "user:acme/api"), ("enabled", "on"))).Content.ReadAsStringAsync();
+        Assert.Contains("Ya existe un revisor &#39;pci&#39; en acme/api", duplicate);
+        await Post("/reviewers/save", ("csrf", Token), ("new", "1"), ("name", "pci"), ("title", "PCI global"),
+            ("id_prefix", "PCI"), ("instructions", "x"), ("target", "global"), ("enabled", "on"));
+        Assert.True(File.Exists(Path.Combine(cfg, "reviewers", "pci.md")));
+
+        // The global edit form offers removing the project's personalization too.
+        var edit = await _http.GetStringAsync("/reviewers/edit?name=pci");
+        Assert.Contains("Quitar la personalización personal de acme/api", edit);
+        await Post("/reviewers/remove", ("csrf", Token), ("name", "pci"), ("target", "user:acme/api"));
+        Assert.False(File.Exists(Path.Combine(cfg, "projects", "acme", "api", "reviewers", "pci.md")));
+        Assert.True(File.Exists(Path.Combine(cfg, "reviewers", "pci.md")));
+    }
+
+    [Fact]
     public async Task Repo_layer_needs_a_local_checkout()
     {
         await Post("/track", ("csrf", Token), ("pr", "acme/api#42"), ("action", "sync"));
@@ -312,13 +350,13 @@ public sealed class WebServerTests : IAsyncLifetime
         var checkout = Directory.CreateDirectory(Path.Combine(_dir.Path, "checkout")).FullName;
 
         var rejected = await (await Post("/repos/acme/api/reviewers/save", ("csrf", Token), ("new", "0"), ("name", "security"),
-            ("title", "Seguridad"), ("id_prefix", "SEC"), ("instructions", "x"), ("target", "repo"), ("enabled", "on"))).Content.ReadAsStringAsync();
+            ("title", "Seguridad"), ("id_prefix", "SEC"), ("instructions", "x"), ("target", "repo:acme/api"), ("enabled", "on"))).Content.ReadAsStringAsync();
         Assert.Contains("Elegí dónde guardar", rejected);
 
         _config.RepoPaths["acme/api"] = checkout;
-        Assert.Contains("value=\"repo\"", await _http.GetStringAsync("/repos/acme/api/reviewers/edit?name=security"));
+        Assert.Contains("value=\"repo:acme/api\"", await _http.GetStringAsync("/repos/acme/api/reviewers/edit?name=security"));
         await Post("/repos/acme/api/reviewers/save", ("csrf", Token), ("new", "0"), ("name", "security"),
-            ("title", "Seguridad del equipo"), ("id_prefix", "SEC"), ("instructions", "Reglas del equipo."), ("target", "repo"), ("enabled", "on"));
+            ("title", "Seguridad del equipo"), ("id_prefix", "SEC"), ("instructions", "Reglas del equipo."), ("target", "repo:acme/api"), ("enabled", "on"));
 
         Assert.True(File.Exists(Path.Combine(checkout, ".prt", "reviewers", "security.md")));
         Assert.Contains("repo (.prt/)", await _http.GetStringAsync("/repos/acme/api/reviewers"));

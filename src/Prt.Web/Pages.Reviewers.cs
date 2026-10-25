@@ -10,8 +10,8 @@ namespace Prt.Web;
 /// <summary>Editor of the panel reviewers: global (all projects) or per project.</summary>
 internal sealed partial class Pages
 {
-    /// <summary>Where an edit can be saved, as offered in the form.</summary>
-    internal sealed record Target(string Key, string Label, string Dir, ProfileLayer Layer);
+    /// <summary>Where an edit can be saved, as offered in the form. <see cref="RepoKey"/> is null for the global layer.</summary>
+    internal sealed record Target(string Key, string Label, string Dir, ProfileLayer Layer, string? RepoKey);
 
     private sealed record Scope(string? RepoKey, ReviewProfile Profile, IReadOnlyList<Target> Targets, string? RepoDir, string? UserDir, string? ReadOnlyRepoDir)
     {
@@ -21,21 +21,40 @@ internal sealed partial class Pages
 
     private Scope ScopeFor(string? repoKey)
     {
+        var config = context.LoadConfig();
         if (repoKey is null)
         {
-            var global = new Target("global", "Global (todos los proyectos)", context.ConfigDir, ProfileLayer.Global);
-            return new Scope(null, context.GlobalProfile(), [global], null, null, null);
+            // From the global view any registered project can be the destination too.
+            var targets = new List<Target> { new("global", "Global (todos los proyectos)", context.ConfigDir, ProfileLayer.Global, null) };
+            foreach (var repo in KnownRepos(config))
+                targets.AddRange(ProjectTargets(config, repo, named: true));
+            return new Scope(null, context.GlobalProfile(), targets, null, null, null);
         }
 
-        var config = context.LoadConfig();
         var user = ProfileLoader.UserProjectDir(repoKey, context.ConfigDir);
         var local = ProfileLoader.RepoDir(config.RepoPathFor(repoKey));
-        var targets = new List<Target> { new("user", "Personal para este proyecto (no se commitea)", user, ProfileLayer.User) };
-        if (local is not null)
-            targets.Add(new("repo", $"Repo, en {local} (para commitear y compartir con el equipo)", local, ProfileLayer.Repo));
         var readOnlyRepo = local is null ? ProfileLoader.RepoDir(context.ProfileCheckout(config, repoKey)) : null;
-        return new Scope(repoKey, context.Profile(config, repoKey), targets, local ?? readOnlyRepo, user, readOnlyRepo);
+        return new Scope(repoKey, context.Profile(config, repoKey), ProjectTargets(config, repoKey, named: false),
+            local ?? readOnlyRepo, user, readOnlyRepo);
     }
+
+    private List<Target> ProjectTargets(PrtConfig config, string repoKey, bool named)
+    {
+        var prefix = named ? $"{repoKey} — " : "";
+        var targets = new List<Target>
+        {
+            new($"user:{repoKey}", $"{prefix}{(named ? "personal" : "Personal para este proyecto")} (no se commitea)",
+                ProfileLoader.UserProjectDir(repoKey, context.ConfigDir), ProfileLayer.User, repoKey),
+        };
+        if (ProfileLoader.RepoDir(config.RepoPathFor(repoKey)) is { } local)
+            targets.Add(new($"repo:{repoKey}", $"{prefix}{(named ? "repo" : "Repo")}, en {local} (para commitear y compartir con el equipo)",
+                local, ProfileLayer.Repo, repoKey));
+        return targets;
+    }
+
+    /// <summary>The profile a save into <paramref name="target"/> changes (to validate it and keep review.json consistent).</summary>
+    private ReviewProfile ProfileOf(Target target) =>
+        target.RepoKey is null ? context.GlobalProfile() : context.Profile(context.LoadConfig(), target.RepoKey);
 
     private string Origin(Scope scope, ReviewerDefinition reviewer) =>
         ProfileLoader.LayerOf(reviewer.Source, context.ConfigDir, scope.RepoDir, scope.UserDir) switch
@@ -52,8 +71,9 @@ internal sealed partial class Pages
         var sb = new StringBuilder();
         sb.Append("<h1>").Append(E(scope.Title)).Append("</h1>");
         sb.Append(repoKey is null
-            ? "<p class=\"muted\">Aplican a todos los proyectos que no los personalicen. Parten de los revisores incorporados; lo que guardes acá queda en "
-              + $"<code>{E(context.ConfigDir)}</code>. Para un proyecto puntual, entrá a <a href=\"/repos\">Repos</a> → Revisores.</p>"
+            ? "<p class=\"muted\">Aplican a todos los proyectos que no los personalicen. Parten de los revisores incorporados; lo que guardes como global queda en "
+              + $"<code>{E(context.ConfigDir)}</code>. ¿Solo para un proyecto? Elegilo en <b>Guardar en</b> al crear o editar un revisor, "
+              + "o entrá a <a href=\"/repos\">Repos</a> → Revisores del proyecto.</p>"
             : "<p class=\"muted\">El proyecto hereda los revisores globales (<a href=\"/reviewers\">ver</a>). Lo que personalices acá vale solo para este repo: "
               + "en tu carpeta personal, o en el <code>.prt/</code> del checkout para compartirlo con el equipo.</p>");
         if (message is not null)
@@ -123,11 +143,31 @@ internal sealed partial class Pages
 
         sb.Append("<p>Guardar en:</p>");
         var selected = target ?? scope.Targets[0].Key;
-        foreach (var t in scope.Targets)
+        if (scope.Targets.Count <= 3)
         {
-            sb.Append("<label style=\"display:block\"><input type=\"radio\" name=\"target\" value=\"").Append(t.Key).Append('"')
-                .Append(t.Key == selected ? " checked" : "").Append("> ").Append(E(t.Label)).Append("</label>");
+            foreach (var t in scope.Targets)
+            {
+                sb.Append("<label style=\"display:block\"><input type=\"radio\" name=\"target\" value=\"").Append(E(t.Key)).Append('"')
+                    .Append(t.Key == selected ? " checked" : "").Append("> ").Append(E(t.Label)).Append("</label>");
+            }
         }
+        else
+        {
+            // Many projects: one select, grouped by project.
+            sb.Append("<select name=\"target\">");
+            foreach (var group in scope.Targets.GroupBy(t => t.RepoKey))
+            {
+                if (group.Key is not null)
+                    sb.Append("<optgroup label=\"").Append(E(group.Key)).Append("\">");
+                foreach (var t in group)
+                    sb.Append("<option value=\"").Append(E(t.Key)).Append('"').Append(t.Key == selected ? " selected" : "").Append('>').Append(E(t.Label)).Append("</option>");
+                if (group.Key is not null)
+                    sb.Append("</optgroup>");
+            }
+            sb.Append("</select>");
+        }
+        if (repoKey is null && scope.Targets.Count > 1)
+            sb.Append("<p class=\"muted\">Si elegís un proyecto, el revisor vale solo ahí y los demás siguen usando el global.</p>");
         if (repoKey is not null && scope.Targets.All(t => t.Layer != ProfileLayer.Repo))
             sb.Append("<p class=\"muted\">Para guardarlo en el <code>.prt/</code> del repo, asociá un checkout local en <a href=\"/repos\">Repos</a>.</p>");
         sb.Append("<p><button class=\"primary\">Guardar</button></p></form>");
@@ -140,11 +180,12 @@ internal sealed partial class Pages
                 var label = t.Layer switch
                 {
                     ProfileLayer.Global => builtIn ? "Volver al revisor incorporado" : "Eliminar este revisor global",
-                    _ => $"Quitar la personalización {(t.Layer == ProfileLayer.Repo ? "del repo" : "personal")}",
+                    _ => $"Quitar la personalización {(t.Layer == ProfileLayer.Repo ? "del repo" : "personal")}"
+                         + (repoKey is null ? $" de {t.RepoKey}" : ""),
                 };
                 sb.Append("<form method=\"post\" class=\"inline\" action=\"").Append(scope.BasePath).Append("/remove\">").Append(Csrf(token))
                     .Append("<input type=\"hidden\" name=\"name\" value=\"").Append(E(r.Name)).Append("\">")
-                    .Append("<input type=\"hidden\" name=\"target\" value=\"").Append(t.Key).Append("\">")
+                    .Append("<input type=\"hidden\" name=\"target\" value=\"").Append(E(t.Key)).Append("\">")
                     .Append("<button>").Append(E(label)).Append("</button></form> ");
             }
         }
@@ -173,10 +214,12 @@ internal sealed partial class Pages
         {
             if (target is null)
                 throw new ArgumentException("Elegí dónde guardar el revisor.");
-            if (isNew && scope.Profile.Reviewers.Any(r => r.Name.Equals(name, StringComparison.OrdinalIgnoreCase)))
-                throw new ArgumentException($"Ya existe un revisor '{name}': editalo desde la lista.");
-            var path = ReviewerFiles.SaveEdited(target.Dir, draft, scope.Profile);
-            return Reviewers(repoKey, $"Revisor {name} guardado en {path}.");
+            var destination = ProfileOf(target);
+            if (isNew && destination.Reviewers.Any(r => r.Name.Equals(name, StringComparison.OrdinalIgnoreCase)))
+                throw new ArgumentException($"Ya existe un revisor '{name}'{(target.RepoKey is null ? "" : $" en {target.RepoKey}")}: editalo desde la lista.");
+            var path = ReviewerFiles.SaveEdited(target.Dir, draft, destination);
+            // Show the list where the change applies.
+            return Reviewers(target.RepoKey, $"Revisor {name} guardado en {path}.");
         }
         catch (ArgumentException ex)
         {
@@ -194,7 +237,7 @@ internal sealed partial class Pages
         ReviewerFiles.Delete(target.Dir, name);
         try
         {
-            ScopeFor(repoKey);
+            ProfileOf(target);
         }
         catch (ArgumentException)
         {
@@ -205,6 +248,12 @@ internal sealed partial class Pages
                 s.Agents?.Remove(name);
             });
         }
-        return Reviewers(repoKey, $"Se quitó {name} de la capa {target.Label.Split(' ')[0].ToLowerInvariant()}: ahora aplica lo heredado.");
+        var layer = target.Layer switch
+        {
+            ProfileLayer.Global => "global",
+            ProfileLayer.Repo => $"del repo de {target.RepoKey}",
+            _ => $"personal de {target.RepoKey}",
+        };
+        return Reviewers(target.RepoKey, $"Se quitó {name} de la capa {layer}: ahora aplica lo heredado.");
     }
 }

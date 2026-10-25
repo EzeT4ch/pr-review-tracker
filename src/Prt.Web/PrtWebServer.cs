@@ -162,8 +162,9 @@ public static class PrtWebServer
         app.MapGet("/reviewers", (HttpContext http) => Write(http, pages.Reviewers(null, null)));
         app.MapGet("/reviewers/edit", (HttpContext http) =>
             Write(http, pages.ReviewerForm(null, http.Request.Query["name"], http.Request.Query["new"] == "1")));
-        app.MapPost("/reviewers/save", async (HttpContext http) => Write(http, pages.SaveReviewer(null, await http.Request.ReadFormAsync())));
-        app.MapPost("/reviewers/remove", async (HttpContext http) => Write(http, pages.RemoveReviewer(null, await http.Request.ReadFormAsync())));
+        // Explicit Task<IResult>: an async lambda taking only HttpContext would bind to RequestDelegate and drop the result.
+        app.MapPost("/reviewers/save", async Task<IResult> (HttpContext http) => Write(http, pages.SaveReviewer(null, await http.Request.ReadFormAsync())));
+        app.MapPost("/reviewers/remove", async Task<IResult> (HttpContext http) => Write(http, pages.RemoveReviewer(null, await http.Request.ReadFormAsync())));
 
         app.MapGet("/repos/{ws}/{repo}/reviewers", (HttpContext http, string ws, string repo) => Write(http, pages.Reviewers($"{ws}/{repo}", null)));
         app.MapGet("/repos/{ws}/{repo}/reviewers/edit", (HttpContext http, string ws, string repo) =>

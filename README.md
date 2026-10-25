@@ -169,7 +169,7 @@ Para ver qué aplica y de dónde sale cada revisor: `prt reviewers list <ws/repo
 - **Qué se puede cambiar** de cada revisor: si está activo (es decir, si corre por defecto en `analyze`), el agente que lo ejecuta, el orden, el título, el prefijo de sus hallazgos y las instrucciones (su foco). También podés crear revisores nuevos.
 - **Dónde se guarda**, lo elegís al guardar:
   - en un proyecto, **personal** (por defecto) o **repo** (`<checkout>/.prt/`, para commitear). La opción repo aparece solo si el repo tiene un checkout local asociado;
-  - en la vista global, siempre en la capa **global**.
+  - en la vista global, en la capa **global** o en **cualquier proyecto registrado**: por cada proyecto se ofrecen *personal* y, si tiene checkout local, *repo*. Así podés crear un revisor para un proyecto sin salir de la vista global.
 - **Volver a lo heredado**: el botón "Quitar la personalización" (o "Volver al revisor incorporado" en la vista global) borra el archivo de esa capa y vuelve a aplicar la configuración de abajo.
 
 El panel escribe los mismos archivos que editarías a mano, así que se pueden revisar y versionar.

@@ -278,8 +278,7 @@ internal sealed partial class Pages(WebContext context, JobRunner jobs, string t
         List<PullRequest> prs;
         using (var store = context.OpenStore())
             prs = store.ListPullRequests().ToList();
-        var repos = prs.Select(p => p.Ref.RepoKey).Concat(config.RepoPaths.Keys)
-            .Distinct(StringComparer.OrdinalIgnoreCase).Order(StringComparer.OrdinalIgnoreCase).ToList();
+        var repos = KnownRepos(config, prs);
         var managed = context.Managed(config);
 
         var sb = new StringBuilder("<h1>Repos</h1>");
@@ -322,6 +321,17 @@ internal sealed partial class Pages(WebContext context, JobRunner jobs, string t
             sb.Append("</div></div>");
         }
         return Page("Repos", sb.ToString());
+    }
+
+    /// <summary>Repos with registered PRs or a mapped checkout.</summary>
+    private static List<string> KnownRepos(PrtConfig config, IEnumerable<PullRequest> prs) =>
+        prs.Select(p => p.Ref.RepoKey).Concat(config.RepoPaths.Keys)
+            .Distinct(StringComparer.OrdinalIgnoreCase).Order(StringComparer.OrdinalIgnoreCase).ToList();
+
+    private List<string> KnownRepos(PrtConfig config)
+    {
+        using var store = context.OpenStore();
+        return KnownRepos(config, store.ListPullRequests());
     }
 
     private string Button(string action, string value, string label) =>
