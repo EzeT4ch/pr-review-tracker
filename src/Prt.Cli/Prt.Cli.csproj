@@ -4,16 +4,25 @@
     <OutputType>Exe</OutputType>
     <AssemblyName>prt</AssemblyName>
     <RootNamespace>Prt.Cli</RootNamespace>
-    <Version>0.3.1</Version>
+    <Version>1.0.0</Version>
     <PackAsTool>true</PackAsTool>
     <ToolCommandName>prt</ToolCommandName>
     <PackageId>PrReviewTracker</PackageId>
     <Description>Trazabilidad de revisiones de PRs de Bitbucket con agentes CLI y export a Obsidian.</Description>
     <PackageOutputPath>../../nupkg</PackageOutputPath>
+    <!-- Low footprint for the long-running web panel: workstation GC without the background GC thread. -->
+    <ServerGarbageCollection>false</ServerGarbageCollection>
+    <ConcurrentGarbageCollection>false</ConcurrentGarbageCollection>
   </PropertyGroup>
 
   <ItemGroup>
+    <!-- Prefer compacting over growing the heap (0-9). -->
+    <RuntimeHostConfigurationOption Include="System.GC.ConserveMemory" Value="7" />
+  </ItemGroup>
+
+  <ItemGroup>
     <ProjectReference Include="..\Prt.Core\Prt.Core.csproj" />
+    <ProjectReference Include="..\Prt.Web\Prt.Web.csproj" />
   </ItemGroup>
 
   <ItemGroup>

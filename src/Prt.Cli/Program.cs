@@ -33,6 +33,7 @@ var root = new RootCommand(
     RecordCommands.Tag(),
     SyncCommands.Sync(),
     SyncCommands.Export(),
+    WebCommands.Web(),
 };
 
 return await root.Parse(args).InvokeAsync();

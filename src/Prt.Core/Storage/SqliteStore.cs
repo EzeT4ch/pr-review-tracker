@@ -20,6 +20,11 @@ public sealed class SqliteStore : IDisposable
         _connection = new SqliteConnection(new SqliteConnectionStringBuilder { DataSource = databasePath }.ToString());
         _connection.Open();
         Execute("PRAGMA foreign_keys = ON;");
+        // The CLI and the web panel may write at the same time: WAL lets readers proceed during a write,
+        // and the timeout makes a second writer wait instead of failing.
+        Execute("PRAGMA busy_timeout = 5000;");
+        if (databasePath != ":memory:")
+            Execute("PRAGMA journal_mode = WAL;");
         Migrations.Apply(_connection);
     }
 

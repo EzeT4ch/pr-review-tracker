@@ -10,7 +10,7 @@ Herramienta de terminal para darle trazabilidad a las revisiones de Pull Request
 
 ## Instalación
 
-Requiere el SDK de .NET 10.
+Requiere el SDK de .NET 10 (incluye el runtime de ASP.NET Core que usa el panel web).
 
 ```bash
 dotnet pack src/Prt.Cli -c Release
@@ -70,6 +70,43 @@ prt export                                     # regenerar todas las notas
 4. Pide el memo al agente en modo headless **dentro de la misma sesión** y lo guarda; extrae el veredicto y los pendientes.
 5. Pregunta si querés agregar una nota propia (`$VISUAL`/`$EDITOR`, o en línea terminando con `.`).
 6. Exporta la nota del PR y el índice al vault.
+
+## Panel web
+
+```bash
+prt web start [--port 5178] [--open] [--sleep-after 10]   # en segundo plano
+prt web status                                           # URL, memoria, si está en reposo, tareas en curso
+prt web stop                                             # lo apaga
+prt web serve                                            # en primer plano (Ctrl+C para salir)
+```
+
+Desde el navegador (`http://127.0.0.1:5178`) podés:
+
+- ver la lista de PRs con filtros por estado y repo, y búsqueda;
+- abrir el detalle de un PR: sesiones con el comando para retomarlas, el último análisis del panel (hallazgos, preguntas), análisis anteriores, timeline y descripción;
+- abrir el reporte completo de cada análisis;
+- registrar notas, decisiones y tags (se exportan a Obsidian igual que desde la consola);
+- registrar un PR nuevo, actualizarlo desde Bitbucket o lanzar `analyze` eligiendo revisores y agente. Corren como tareas en segundo plano; la página se refresca sola mientras corren.
+
+La revisión interactiva (`prt review`) sigue en la terminal, porque necesita una consola.
+
+**Consumo mínimo**:
+
+- Kestrel en modo *slim* (sin MVC ni Razor), páginas generadas en el servidor sin JavaScript, con el CSS embebido.
+- Una conexión a SQLite por pedido y GC de estación sin hilo de fondo (`ConserveMemory`).
+- En reposo usa unos 12 MB de memoria propia; el resto que muestra el sistema son librerías del runtime compartidas.
+- **Reposo**: tras `--sleep-after` minutos sin pedidos (10 por defecto; 0 lo desactiva) libera memoria y conexiones y no ejecuta nada hasta el próximo pedido, que lo despierta solo. No entra en reposo mientras hay un análisis en curso.
+
+**Seguridad**:
+
+- Escucha solo en `127.0.0.1` y rechaza pedidos con otro `Host` (protección contra DNS rebinding).
+- Los formularios llevan un token anti-CSRF.
+- El Markdown de los agentes se muestra con el HTML desactivado y una Content-Security-Policy estricta.
+- `prt web stop` usa un token que se guarda en `web.json`, en la carpeta de datos, con permisos 600.
+
+| Lista de PRs | Detalle de un PR | Reporte de un análisis |
+|---|---|---|
+| ![](docs/img/web-home.png) | ![](docs/img/web-pr.png) | ![](docs/img/web-run.png) |
 
 ## Panel de revisores
 
@@ -147,5 +184,6 @@ dotnet test
 ```
 
 - `src/Prt.Core`: dominio, SQLite (`Storage`), cliente de Bitbucket, adaptadores de agentes, export a Obsidian, el flujo de revisión (`Review/ReviewService`) y el panel (`Panel/`: estándar, parser de reportes, perfiles por proyecto, orquestación y renderizado). Los revisores y el estándar incorporados están en `Panel/Defaults/`.
+- `src/Prt.Web`: panel web (Kestrel slim, páginas en el servidor, tareas en segundo plano, modo reposo).
 - `src/Prt.Cli`: comandos (`System.CommandLine`) e interacción (`Spectre.Console`).
 - `tests/Prt.Core.Tests`: xUnit, con runner de procesos, Bitbucket y UI falsos.
