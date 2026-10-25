@@ -86,6 +86,11 @@ public sealed partial class ObsidianExporter
         Yaml(sb, "date", Local(view.Run.StartedAt).ToString("yyyy-MM-dd'T'HH:mm", CultureInfo.InvariantCulture));
         Yaml(sb, "verdict", view.Run.Verdict ?? "");
         Yaml(sb, "head_commit", CommitHashes.Short(view.Run.HeadCommit));
+        if (view.Run.BaseBranch is { Length: > 0 } baseBranch)
+        {
+            Yaml(sb, "base_branch", baseBranch);
+            Yaml(sb, "base_commit", CommitHashes.Short(view.Run.BaseCommit));
+        }
         sb.Append("reviewers:");
         AppendList(sb, view.Reviewers.Select(r => r.Result.Reviewer));
         sb.Append("blockers: ").Append(view.Count(Severity.Blocker)).Append('\n');

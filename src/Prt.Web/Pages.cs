@@ -4,6 +4,7 @@ using Prt.Core.Bitbucket;
 using Prt.Core.Config;
 using Prt.Core.Domain;
 using Prt.Core.Panel;
+using Prt.Core.Repos;
 using static Prt.Web.Html;
 
 namespace Prt.Web;
@@ -109,9 +110,8 @@ internal sealed class Pages(WebContext context, JobRunner jobs, string token)
         AppendAnalyzeForm(sb, config, pr, url);
         sb.Append("</div>");
 
-        if (config.RepoPathFor(prRef.RepoKey) is null)
-            sb.Append("<p class=\"muted\">Sin checkout local: los revisores solo ven el diff. Asocialo con <code>prt map ")
-                .Append(E(prRef.RepoKey)).Append(" &lt;ruta&gt;</code>.</p>");
+        sb.Append("<p class=\"muted\">Código para los agentes: ").Append(CodeSource(config, prRef.RepoKey, pr.DestinationBranch))
+            .Append(" · <a href=\"/repos#").Append(E(prRef.RepoKey)).Append("\">cambiar</a></p>");
 
         AppendPanel(sb, h, url);
         AppendSessions(sb, config, h);
@@ -254,6 +254,76 @@ internal sealed class Pages(WebContext context, JobRunner jobs, string token)
         sb.Append("</form></div>");
     }
 
+    private string CodeSource(PrtConfig config, string repoKey, string? destination)
+    {
+        if (config.RepoPathFor(repoKey) is { } local)
+            return $"checkout local <code>{E(local)}</code>";
+        if (config.RepoPaths.TryGetValue(repoKey, out var missing))
+            return $"<span class=\"v-block\">el checkout <code>{E(missing)}</code> no existe</span>";
+        if (!config.ManagedClones)
+            return "solo el diff (clones gestionados desactivados)";
+        var managed = context.Managed(config);
+        return managed.Exists(repoKey)
+            ? $"clon gestionado por prt, en <code>{E(destination is { Length: > 0 } d ? d : "la rama de destino")}</code>"
+            : "clon gestionado por prt (se crea en el próximo análisis)";
+    }
+
+    // ---- Repos -----------------------------------------------------------------------------
+
+    public string Repos(string? focus, string? message)
+    {
+        var config = context.LoadConfig();
+        List<PullRequest> prs;
+        using (var store = context.OpenStore())
+            prs = store.ListPullRequests().ToList();
+        var repos = prs.Select(p => p.Ref.RepoKey).Concat(config.RepoPaths.Keys)
+            .Distinct(StringComparer.OrdinalIgnoreCase).Order(StringComparer.OrdinalIgnoreCase).ToList();
+        var managed = context.Managed(config);
+
+        var sb = new StringBuilder("<h1>Repos</h1>");
+        sb.Append("<p class=\"muted\">De dónde leen el código los agentes. Con un <b>checkout local</b> usan tu carpeta tal como está. ")
+            .Append("Sin él, prt mantiene un <b>clon gestionado</b> de solo lectura en la rama de destino de cada PR (por ejemplo develop), ")
+            .Append("actualizado en cada análisis, para que el diff se compare contra el proyecto tal como está hoy.</p>");
+        if (message is not null)
+            sb.Append("<div class=\"job\">").Append(E(message)).Append("</div>");
+        if (repos.Count == 0)
+            sb.Append("<p class=\"muted\">Todavía no hay repos: registrá un PR desde la página de PRs.</p>");
+
+        foreach (var repoKey in repos)
+        {
+            var parts = repoKey.Split('/');
+            var action = Html.Url("repos", parts[0], parts[1]);
+            var destinations = prs.Where(p => string.Equals(p.Ref.RepoKey, repoKey, StringComparison.OrdinalIgnoreCase))
+                .Select(p => p.DestinationBranch).Where(b => b.Length > 0).Distinct().ToList();
+            sb.Append("<div class=\"card\" id=\"").Append(E(repoKey)).Append("\"").Append(focus == repoKey ? " style=\"border-color:var(--link)\"" : "").Append('>');
+            sb.Append("<h3>").Append(E(repoKey)).Append("</h3><p>Ahora: ").Append(CodeSource(config, repoKey, destinations.FirstOrDefault())).Append("</p>");
+
+            if (managed.Exists(repoKey))
+            {
+                sb.Append("<p class=\"muted\">Clon gestionado: ").Append(managed.Size(repoKey))
+                    .Append(" · ramas preparadas: ").Append(E(string.Join(", ", managed.Worktrees(repoKey)))).Append("</p>");
+            }
+
+            sb.Append("<form method=\"post\" action=\"").Append(action).Append("\" class=\"row\">").Append(Csrf(token))
+                .Append("<input name=\"path\" size=\"60\" placeholder=\"C:\\workspace\\proyecto o /home/vos/proyecto\" value=\"")
+                .Append(E(config.RepoPaths.GetValueOrDefault(repoKey))).Append("\">")
+                .Append("<button name=\"action\" value=\"local\" class=\"primary\">Usar este checkout local</button></form>");
+
+            sb.Append("<div class=\"row\" style=\"margin-top:8px\">");
+            if (config.RepoPaths.ContainsKey(repoKey))
+                sb.Append(Button(action, "managed", "Usar el clon gestionado"));
+            if (config.ManagedClones && config.RepoPathFor(repoKey) is null && destinations.Count > 0)
+                sb.Append(Button(action, "update", "Actualizar clon ahora"));
+            if (managed.Exists(repoKey))
+                sb.Append(Button(action, "delete", "Borrar clon gestionado"));
+            sb.Append("</div></div>");
+        }
+        return Page("Repos", sb.ToString());
+    }
+
+    private string Button(string action, string value, string label) =>
+        $"<form method=\"post\" class=\"inline\" action=\"{action}\">{Csrf(token)}<button name=\"action\" value=\"{value}\">{E(label)}</button></form>";
+
     // ---- Run report ------------------------------------------------------------------------
 
     public string Run(PrRef prRef, long runId)
@@ -271,6 +341,9 @@ internal sealed class Pages(WebContext context, JobRunner jobs, string token)
         sb.Append("<p>").Append(VerdictBadge(view.Run.Verdict)).Append(" · ").Append(Counts(view));
         if (view.Run.HeadCommit is { Length: > 0 } head)
             sb.Append(" · head <code>").Append(E(CommitHashes.Short(head))).Append("</code>");
+        if (view.Run.BaseBranch is { Length: > 0 } baseBranch)
+            sb.Append(" · base <code>").Append(E(baseBranch)).Append("</code> @ <code>").Append(E(CommitHashes.Short(view.Run.BaseCommit)))
+                .Append("</code> <span class=\"muted\">(clon gestionado)</span>");
         sb.Append("</p>");
 
         AppendReviewerTable(sb, view);
@@ -383,11 +456,19 @@ internal sealed class Pages(WebContext context, JobRunner jobs, string token)
             JobStatus.Failed => ("job-failed", "falló"),
             _ => ("", "terminada"),
         };
-        var kind = job.Kind == "analyze" ? "Análisis del panel" : "Actualización desde Bitbucket";
-        var title = link ? $"<a href=\"{PrtWebServer.PrUrl(job.Pr)}\">{E(job.Pr.Key)}</a> · " : "";
+        var kind = job.Kind switch
+        {
+            "analyze" => "Análisis del panel",
+            "clone" => "Actualización del clon gestionado",
+            _ => "Actualización desde Bitbucket",
+        };
+        var title = !link ? ""
+            : job.Pr.Number == 0 ? $"<a href=\"/repos#{E(job.Pr.RepoKey)}\">{E(job.Pr.RepoKey)}</a> · "
+            : $"<a href=\"{PrtWebServer.PrUrl(job.Pr)}\">{E(job.Pr.Key)}</a> · ";
+        var elapsed = (int)((job.EndedAt ?? DateTimeOffset.Now) - job.StartedAt).TotalSeconds;
         var when = job.EndedAt is { } end
-            ? $"{job.StartedAt:HH:mm}–{end:HH:mm}"
-            : $"desde {job.StartedAt.ToString("HH:mm", CultureInfo.InvariantCulture)}";
+            ? $"{job.StartedAt:HH:mm}–{end:HH:mm} ({elapsed} s)"
+            : $"desde {job.StartedAt.ToString("HH:mm", CultureInfo.InvariantCulture)} ({elapsed} s)";
         return $"<div class=\"job {css}\"><b>{title}{kind}</b> · {label} · <span class=\"muted\">{when}</span>" +
                $"<details{(job.Status == JobStatus.Running ? " open" : "")}><summary class=\"muted\">Detalle</summary>" +
                $"<div class=\"log\">{E(string.Join('\n', job.Log))}</div></details></div>";

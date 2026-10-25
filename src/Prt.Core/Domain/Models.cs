@@ -105,6 +105,11 @@ public sealed class ReviewRun
     public DateTimeOffset? EndedAt { get; set; }
     public string? HeadCommit { get; set; }
     public string? Verdict { get; set; }
+
+    /// <summary>Branch and commit of the managed clone the reviewers read; null with a local checkout or diff only.</summary>
+    public string? BaseBranch { get; set; }
+
+    public string? BaseCommit { get; set; }
 }
 
 /// <summary>What one reviewer of a run produced.</summary>

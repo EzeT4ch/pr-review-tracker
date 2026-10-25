@@ -152,6 +152,45 @@ public static class PrtWebServer
 
         app.MapGet("/jobs", (HttpContext http) => Write(http, pages.Jobs()));
 
+        app.MapGet("/repos", (HttpContext http) => Write(http, pages.Repos(null, null)));
+
+        app.MapPost("/repos/{ws}/{repo}", async (HttpContext http, string ws, string repo) =>
+        {
+            var repoKey = $"{ws}/{repo}";
+            var form = await http.Request.ReadFormAsync();
+            var config = context.LoadConfig();
+            switch (form["action"].ToString())
+            {
+                case "local":
+                {
+                    var path = form["path"].ToString().Trim().Trim('"');
+                    if (path.Length == 0 || !Directory.Exists(path))
+                        return Write(http, pages.Repos(repoKey, $"La carpeta '{path}' no existe en esta máquina."));
+                    path = Path.GetFullPath(path);
+                    config.RepoPaths[repoKey] = path;
+                    context.SaveConfig(config);
+                    var warning = Prt.Core.Config.GitCheckout.FindRoot(path) is { } root && !Prt.Core.Config.GitCheckout.HasBitbucketRemote(root, repoKey)
+                        ? $" Ojo: el remoto de esa carpeta no es bitbucket.org/{repoKey}."
+                        : "";
+                    return Write(http, pages.Repos(repoKey, $"{repoKey} usa ahora el checkout local {path}.{warning}"));
+                }
+                case "managed":
+                    config.RepoPaths.Remove(repoKey);
+                    context.SaveConfig(config);
+                    return Write(http, pages.Repos(repoKey, config.ManagedClones
+                        ? $"{repoKey} usa el clon gestionado por prt."
+                        : $"{repoKey} ya no tiene checkout local (los clones gestionados están desactivados en el config)."));
+                case "update":
+                    StartRepoJob(repoKey, config);
+                    return Redirect(http, "/jobs");
+                case "delete":
+                    context.Managed(config).Delete(repoKey);
+                    return Write(http, pages.Repos(repoKey, $"Clon gestionado de {repoKey} borrado; se vuelve a crear en el próximo análisis."));
+                default:
+                    return Write(http, pages.Repos(null, null));
+            }
+        });
+
         app.MapGet("/health", (HttpContext http) =>
         {
             using var process = Process.GetCurrentProcess();
@@ -186,6 +225,24 @@ public static class PrtWebServer
             return store.FindPullRequest(prRef) is not null;
         }
 
+        // Updates the managed clone for every destination branch seen in the repo's PRs.
+        void StartRepoJob(string repoKey, Prt.Core.Config.PrtConfig config)
+        {
+            var parts = repoKey.Split('/');
+            jobs.Start("clone", new PrRef(parts[0], parts[1], 0), async job =>
+            {
+                List<PullRequest> prs;
+                using (var store = context.OpenStore())
+                    prs = store.ListPullRequests(repoKey: repoKey).ToList();
+                var managed = context.Managed(config);
+                foreach (var branch in prs.Select(p => p.DestinationBranch).Where(b => b.Length > 0).Distinct())
+                {
+                    var info = await managed.PrepareAsync(job.Pr, branch, null, job);
+                    job.Add($"Listo: {info.Describe()}.");
+                }
+            });
+        }
+
         void StartJob(string kind, PrRef prRef, PanelOptions panelOptions) =>
             jobs.Start(kind, prRef, job => kind == "analyze" ? AnalyzeAsync(job, panelOptions) : SyncAsync(job));
 
@@ -193,10 +250,14 @@ public static class PrtWebServer
         {
             var config = context.LoadConfig();
             using var store = context.OpenStore();
-            job.Add("Consultando Bitbucket…");
-            var (pr, _) = await new PullRequestSync(store, context.Bitbucket(config), job).RefreshAsync(job.Pr);
-            context.Exporter(config)?.Export(store, pr.Id);
-            job.Add($"{pr.Key}: {pr.State} · {pr.Title}");
+            job.Add("Consultando el PR y sus commits en Bitbucket…");
+            var (pr, commits) = await new PullRequestSync(store, context.Bitbucket(config), job).RefreshAsync(job.Pr);
+            job.Add($"{pr.Key}: {pr.State} · {pr.Title} · {commits.Count} commit(s)");
+            if (context.Exporter(config) is { } exporter)
+            {
+                exporter.Export(store, pr.Id);
+                job.Add("Nota de Obsidian actualizada.");
+            }
         }
 
         async Task AnalyzeAsync(Job job, PanelOptions panelOptions)
@@ -204,7 +265,7 @@ public static class PrtWebServer
             var config = context.LoadConfig();
             using var store = context.OpenStore();
             var panel = new PanelService(config, store, context.Bitbucket(config), name => context.Agent(config, name),
-                context.Exporter(config), job, context.RunsRoot, context.Clock);
+                context.Exporter(config), job, context.RunsRoot, context.Clock, checkouts: context.Checkouts(config));
             var outcome = await panel.AnalyzeAsync(job.Pr, panelOptions);
             job.Add($"Veredicto del panel: {(outcome.Verdict is { } v ? ReviewStandard.Label(v) : "sin reportes válidos")}");
         }

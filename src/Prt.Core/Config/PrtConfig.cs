@@ -23,6 +23,12 @@ public sealed class PrtConfig
 
     public PromptSettings Prompts { get; set; } = new();
 
+    /// <summary>
+    /// When a repo has no local checkout mapped, prt keeps its own read-only clone (in the data folder)
+    /// positioned at the PR's destination branch, so agents can read the code and not only the diff.
+    /// </summary>
+    public bool ManagedClones { get; set; } = true;
+
     public AgentSettings GetAgent(string name)
     {
         var defaults = AgentSettings.DefaultFor(name);
@@ -53,6 +59,21 @@ public sealed class BitbucketSettings
     public string? Username { get; set; }
 
     public string? ApiToken { get; set; }
+
+    /// <summary>Base URL for git over HTTPS (overridable for mirrors and tests).</summary>
+    public string GitBaseUrl { get; set; } = "https://bitbucket.org";
+
+    /// <summary>
+    /// Username for git over HTTPS. When empty: x-bitbucket-api-token-auth for Atlassian API tokens
+    /// (the username is an email), or the Bitbucket username itself for app passwords.
+    /// </summary>
+    public string? GitUsername { get; set; }
+
+    [JsonIgnore]
+    public string? EffectiveGitUsername =>
+        GitUsername is { Length: > 0 } explicitUser ? explicitUser
+        : EffectiveUsername is { } user && user.Contains('@') ? "x-bitbucket-api-token-auth"
+        : EffectiveUsername;
 
     [JsonIgnore]
     public string? EffectiveUsername => Environment.GetEnvironmentVariable("PRT_BB_USER") is { Length: > 0 } v ? v : Username;

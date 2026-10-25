@@ -58,6 +58,8 @@ public static class ReportRenderer
         sb.Append('_').Append(formatDate(run.StartedAt));
         if (run.HeadCommit is { Length: > 0 } head)
             sb.Append(" · head `").Append(CommitHashes.Short(head)).Append('`');
+        if (run.BaseBranch is { Length: > 0 } baseBranch)
+            sb.Append(" · base `").Append(baseBranch).Append("` @ `").Append(CommitHashes.Short(run.BaseCommit)).Append("` (clon gestionado)");
         sb.Append(" · ").Append(view.Reviewers.Count).Append(" revisor(es)_\n\n");
         sb.Append(CountsLine(view)).Append("\n\n");
 

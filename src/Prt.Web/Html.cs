@@ -80,7 +80,7 @@ internal static class Html
         if (refreshSeconds is { } seconds)
             sb.Append("<meta http-equiv=\"refresh\" content=\"").Append(seconds).Append("\">");
         sb.Append("<title>").Append(E(title)).Append(" · prt</title><style>").Append(Css).Append("</style></head><body>")
-            .Append("<header><a class=\"brand\" href=\"/\">prt</a><nav><a href=\"/\">PRs</a><a href=\"/jobs\">Tareas</a></nav></header><main>")
+            .Append("<header><a class=\"brand\" href=\"/\">prt</a><nav><a href=\"/\">PRs</a><a href=\"/repos\">Repos</a><a href=\"/jobs\">Tareas</a></nav></header><main>")
             .Append(body)
             .Append("</main></body></html>");
         return sb.ToString();

@@ -3,6 +3,7 @@ using Prt.Core.Bitbucket;
 using Prt.Core.Config;
 using Prt.Core.Domain;
 using Prt.Core.Export;
+using Prt.Core.Repos;
 using Prt.Core.Review;
 using Prt.Core.Storage;
 
@@ -46,8 +47,11 @@ public sealed class PanelService(
     IPanelUi ui,
     string runsRoot,
     TimeProvider? clock = null,
-    Func<string, string?, ReviewProfile>? loadProfile = null)
+    Func<string, string?, ReviewProfile>? loadProfile = null,
+    ICheckoutProvider? checkouts = null)
 {
+    private readonly ICheckoutProvider _checkouts = checkouts ?? new LocalCheckouts(config);
+
     private readonly TimeProvider _clock = clock ?? TimeProvider.System;
     // SqliteStore wraps a single connection: reviewers finishing concurrently take turns.
     private readonly Lock _storeLock = new();
@@ -56,9 +60,8 @@ public sealed class PanelService(
     {
         var (pr, commits) = await new PullRequestSync(store, bitbucket, ui).RefreshAsync(prRef, ct);
         var head = commits.FirstOrDefault()?.Hash ?? pr.LastReviewedCommit;
-        var checkout = config.RepoPathFor(prRef.RepoKey);
-        if (checkout is null)
-            ui.Warn($"{prRef.RepoKey} no tiene checkout local asociado (`prt map {prRef.RepoKey} <ruta>`): los revisores solo verán el diff.");
+        var code = await _checkouts.ResolveAsync(pr, ui, ct);
+        var checkout = code?.Path;
 
         var profile = (loadProfile ?? ProfileLoader.Load)(prRef.RepoKey, checkout);
         var reviewers = profile.Select(options.Reviewers);
@@ -66,8 +69,8 @@ public sealed class PanelService(
             throw new ArgumentException("No hay revisores habilitados para este proyecto (revisá review.json o los archivos de revisores).");
 
         var previousRun = store.ListRuns(pr.Id).LastOrDefault();
-        var run = store.StartRun(pr.Id, head, _clock.GetUtcNow());
-        var context = await WriteContextAsync(pr, commits, profile, checkout, run, ct);
+        var run = store.StartRun(pr.Id, head, _clock.GetUtcNow(), code?.BaseBranch, code?.BaseCommit);
+        var context = await WriteContextAsync(pr, commits, profile, code, run, ct);
         var newCommits = previousRun?.Run.HeadCommit is { } previousHead ? CommitHashes.Since(commits, previousHead) : null;
 
         using var gate = new SemaphoreSlim(Math.Clamp(options.MaxParallel ?? profile.MaxParallel, 1, 16));
@@ -192,7 +195,7 @@ public sealed class PanelService(
     }
 
     private async Task<RunContext> WriteContextAsync(PullRequest pr, IReadOnlyList<PrCommit> commits, ReviewProfile profile,
-        string? checkout, ReviewRun run, CancellationToken ct)
+        CheckoutInfo? code, ReviewRun run, CancellationToken ct)
     {
         var dir = Path.Combine(runsRoot, ObsidianExporter.SafeName(pr.Workspace), ObsidianExporter.SafeName(pr.Repo),
             pr.Number.ToString(System.Globalization.CultureInfo.InvariantCulture), run.Id.ToString(System.Globalization.CultureInfo.InvariantCulture));
@@ -210,7 +213,7 @@ public sealed class PanelService(
             ui.Warn($"No se pudo obtener el diff del PR: {ex.Message}");
         }
 
-        var context = new RunContext(dir, hasDiff, profile.Context.Length > 0, checkout is not null, profile.ContextFiles);
+        var context = new RunContext(dir, hasDiff, profile.Context.Length > 0, code, profile.ContextFiles);
         await File.WriteAllTextAsync(context.PrPath, PanelPrompts.PrFile(pr, commits), ct);
         if (context.HasProjectContext)
             await File.WriteAllTextAsync(context.ContextPath, profile.Context, ct);

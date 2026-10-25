@@ -26,7 +26,24 @@ prt init                       # interactivo: vault, carpeta, agente por defecto
 prt map acme/payments ~/src/payments   # checkout local donde corre el agente para ese repo
 ```
 
-Si un repo no tiene checkout asociado, `prt review` y `prt analyze` preguntan si querés asociarlo. Si los corrés desde dentro de un clon de ese repo (detectado por el remoto de Bitbucket, también desde subcarpetas o worktrees), lo proponen directamente.
+### De dónde leen el código los agentes
+
+1. **Checkout local** asociado al repo, con `prt map <ws/repo> <ruta>` o desde la página **Repos** de la web. Los agentes usan tu carpeta tal como está. Si corrés `prt review`/`prt analyze` dentro de un clon del repo (detectado por el remoto de Bitbucket, también desde subcarpetas o worktrees), prt propone asociarlo.
+2. **Clon gestionado por prt** (por defecto, cuando no hay checkout). prt clona el repo una vez con tu API token, en modo solo lectura: es un clon parcial que baja el historial sin el contenido de los archivos. En cada análisis lo deja en la **punta de la rama de destino del PR** (por ejemplo `develop`), así el diff se compara contra el proyecto tal como está hoy. También trae la rama del PR, para que los agentes puedan usar `git diff origin/develop...origin/feature`.
+3. **Solo el diff**, si desactivás los clones (`"managedClones": false`) o el clon falla.
+
+```bash
+prt map acme/payments --managed   # volver al clon gestionado
+prt repos                         # de dónde lee cada repo y cuánto ocupan los clones
+prt repos clean [acme/payments]   # borrar clones gestionados (se recrean en el próximo análisis)
+```
+
+Detalles del clon gestionado:
+
+- **Ubicación**: `<datos>/repos/<ws>/<repo>/`, con un worktree por rama de destino.
+- **Credenciales**: el token viaja a git por variables de entorno y solo hacia bitbucket.org. Nunca queda en `.git/config`, ni en la línea de comandos, ni al alcance de los agentes.
+- **Usuario de git**: con un API token de Atlassian es `x-bitbucket-api-token-auth`; con una app password, tu usuario de Bitbucket. Se puede cambiar con `bitbucket.gitUsername` en el config. El token necesita permiso de lectura de repositorios.
+- **Requisito**: tener `git` instalado.
 
 Bitbucket Cloud: creá un **API token** de Atlassian con permiso de lectura de pull requests y repositorios, y usá tu email de Atlassian como usuario (también funcionan usuario + app password). Las variables `PRT_BB_USER` y `PRT_BB_TOKEN` tienen prioridad sobre el config.
 
@@ -107,6 +124,10 @@ La revisión interactiva (`prt review`) sigue en la terminal, porque necesita un
 | Lista de PRs | Detalle de un PR | Reporte de un análisis |
 |---|---|---|
 | ![](docs/img/web-home.png) | ![](docs/img/web-pr.png) | ![](docs/img/web-run.png) |
+
+La página **Repos** permite asociar un checkout local, volver al clon gestionado, actualizarlo o borrarlo:
+
+![](docs/img/web-repos.png)
 
 ## Panel de revisores
 

@@ -6,6 +6,7 @@ using Prt.Core.Config;
 using Prt.Core.Domain;
 using Prt.Core.Export;
 using Prt.Core.Panel;
+using Prt.Core.Repos;
 using Prt.Core.Review;
 using Prt.Core.Storage;
 
@@ -58,9 +59,33 @@ public sealed class PanelServiceTests : IDisposable
         _dir.Dispose();
     }
 
-    private PanelService Service(ReviewProfile? profile = null) => new(
+    private PanelService Service(ReviewProfile? profile = null, ICheckoutProvider? checkouts = null) => new(
         _config, _store, _bitbucket, name => AgentFactory.Create(name, _config, _runner), _exporter, _ui,
-        Path.Combine(_dir.Path, "runs"), _clock, (_, _) => profile ?? ProfileLoader.Load([]));
+        Path.Combine(_dir.Path, "runs"), _clock, (_, _) => profile ?? ProfileLoader.Load([]), checkouts);
+
+    private sealed class FixedCheckout(CheckoutInfo info) : ICheckoutProvider
+    {
+        public Task<CheckoutInfo?> ResolveAsync(PullRequest pr, IStatusUi ui, CancellationToken ct = default) =>
+            Task.FromResult<CheckoutInfo?>(info);
+    }
+
+    [Fact]
+    public async Task Managed_clone_is_the_working_directory_and_the_base_is_recorded()
+    {
+        var clone = Directory.CreateDirectory(Path.Combine(_dir.Path, "clone")).FullName;
+        _config.RepoPaths.Clear();
+
+        var outcome = await Service(checkouts: new FixedCheckout(new CheckoutInfo(clone, CheckoutKind.Managed, "develop", "0123456789abcdef")))
+            .AnalyzeAsync(Ref, new PanelOptions(Reviewers: ["bugs"]));
+
+        var call = _runner.Captured.Single();
+        Assert.Equal(clone, call.Cwd);
+        Assert.Contains("rama de destino `develop` (commit 0123456789ab), tal como está hoy", call.Args[^1]);
+        Assert.Contains("git diff origin/develop...origin/feature/qr", call.Args[^1]);
+        Assert.Equal(("develop", "0123456789abcdef"), (outcome.Run.BaseBranch, outcome.Run.BaseCommit));
+        var report = Directory.GetFiles(Path.GetDirectoryName(outcome.NotePath)!, "Análisis*.md").Single();
+        Assert.Contains("base `develop` @ `0123456789ab` (clon gestionado)", File.ReadAllText(report));
+    }
 
     private static string Report(string reviewer, string verdict, params string[] findings) =>
         $$"""{"reviewer":"{{reviewer}}","verdict":"{{verdict}}","summary":"Resumen de {{reviewer}}.","findings":[{{string.Join(",", findings)}}],"questions":[]}""";

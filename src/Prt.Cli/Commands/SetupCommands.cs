@@ -59,18 +59,83 @@ internal static class SetupCommands
     public static Command Map()
     {
         var repo = new Argument<string>("repo") { Description = "workspace/repo" };
-        var path = new Argument<string>("path") { Description = "Checkout local donde corre el agente" };
-        var command = new Command("map", "Asocia un repo de Bitbucket a un checkout local") { repo, path };
+        var path = new Argument<string?>("path") { Description = "Checkout local donde corren los agentes", Arity = ArgumentArity.ZeroOrOne };
+        var managed = new Option<bool>("--managed") { Description = "Quitar el checkout local y usar el clon gestionado por prt" };
+        var command = new Command("map", "Asocia un repo de Bitbucket a un checkout local (o vuelve al clon gestionado)") { repo, path, managed };
         command.SetAction((result, _) => Cli.Run(app =>
         {
-            var full = Path.GetFullPath(result.GetValue(path)!);
+            var repoKey = result.GetValue(repo)!.Trim();
+            if (result.GetValue(managed))
+            {
+                app.Config.RepoPaths.Remove(repoKey);
+                ConfigStore.Save(app.Config);
+                app.Ui.Success(app.Config.ManagedClones
+                    ? $"{repoKey} usa el clon gestionado por prt (en la rama de destino de cada PR)."
+                    : $"{repoKey} ya no tiene checkout local; los clones gestionados están desactivados (managedClones en el config).");
+                return Task.CompletedTask;
+            }
+
+            var full = Path.GetFullPath(result.GetValue(path) ?? throw new UserException("Indicá la ruta del checkout, o --managed."));
             if (!Directory.Exists(full))
                 throw new UserException($"{full} no existe.");
-            app.Config.RepoPaths[result.GetValue(repo)!.Trim()] = full;
+            app.Config.RepoPaths[repoKey] = full;
             ConfigStore.Save(app.Config);
-            app.Ui.Success($"{result.GetValue(repo)} → {full}");
+            app.Ui.Success($"{repoKey} → {full}");
             return Task.CompletedTask;
         }));
+        return command;
+    }
+
+    public static Command Repos()
+    {
+        var command = new Command("repos", "Muestra de dónde leen el código los agentes en cada repo y el tamaño de los clones gestionados");
+        command.SetAction((_, _) => Cli.Run(app =>
+        {
+            var managed = app.Managed;
+            var repos = app.Store.ListPullRequests().Select(p => p.Ref.RepoKey).Concat(app.Config.RepoPaths.Keys)
+                .Distinct(StringComparer.OrdinalIgnoreCase).Order(StringComparer.OrdinalIgnoreCase).ToList();
+            if (repos.Count == 0)
+            {
+                app.Ui.Info("Todavía no hay repos registrados.");
+                return Task.CompletedTask;
+            }
+
+            var table = new Table().Border(Symbols.Border).AddColumns("Repo", "Código para los agentes", "Clon gestionado");
+            foreach (var repoKey in repos)
+            {
+                var source = app.Config.RepoPathFor(repoKey) is { } local ? $"checkout local {local}"
+                    : app.Config.RepoPaths.TryGetValue(repoKey, out var missing) ? $"checkout {missing} (no existe)"
+                    : app.Config.ManagedClones ? "clon gestionado" : "solo el diff";
+                var clone = managed.Exists(repoKey)
+                    ? $"{managed.Size(repoKey)} · {string.Join(", ", managed.Worktrees(repoKey))}"
+                    : "—";
+                table.AddRow(Markup.Escape(repoKey), Markup.Escape(source), Markup.Escape(clone));
+            }
+            AnsiConsole.Write(table);
+            app.Ui.Info($"Clones en {managed.Root}");
+            return Task.CompletedTask;
+        }));
+
+        var repoArg = new Argument<string?>("repo") { Description = "workspace/repo (por defecto, todos)", Arity = ArgumentArity.ZeroOrOne };
+        var clean = new Command("clean", "Borra clones gestionados (se vuelven a crear en el próximo análisis)") { repoArg };
+        clean.SetAction((result, _) => Cli.Run(app =>
+        {
+            var managed = app.Managed;
+            if (result.GetValue(repoArg) is { } one)
+            {
+                managed.Delete(one.Trim());
+                app.Ui.Success($"Clon gestionado de {one} borrado.");
+            }
+            else if (Directory.Exists(managed.Root))
+            {
+                foreach (var workspace in Directory.GetDirectories(managed.Root))
+                    foreach (var repoDir in Directory.GetDirectories(workspace))
+                        managed.Delete($"{Path.GetFileName(workspace)}/{Path.GetFileName(repoDir)}");
+                app.Ui.Success("Clones gestionados borrados.");
+            }
+            return Task.CompletedTask;
+        }));
+        command.Subcommands.Add(clean);
         return command;
     }
 

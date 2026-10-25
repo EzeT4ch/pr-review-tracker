@@ -1,6 +1,7 @@
 using System.Text;
 using Prt.Core.Bitbucket;
 using Prt.Core.Domain;
+using Prt.Core.Repos;
 
 namespace Prt.Core.Panel;
 
@@ -9,9 +10,11 @@ public sealed record RunContext(
     string Dir,
     bool HasDiff,
     bool HasProjectContext,
-    bool HasCheckout,
+    CheckoutInfo? Checkout,
     IReadOnlyList<string> ContextFiles)
 {
+    public bool HasCheckout => Checkout is not null;
+
     public string DiffPath => Path.Combine(Dir, "diff.patch");
     public string PrPath => Path.Combine(Dir, "pr.md");
     public string ContextPath => Path.Combine(Dir, "context.md");
@@ -117,9 +120,19 @@ public static class PanelPrompts
             sb.Append("- Documentación del proyecto: `").Append(file).Append("` (relativo al repositorio)\n");
         if (hasPrevious)
             sb.Append("- Tus hallazgos anteriores: `").Append(context.PreviousPath(reviewer.Name)).Append("`\n");
-        sb.Append(context.HasCheckout
-            ? "- El directorio actual es el repositorio: leé el código que necesites para entender el cambio.\n"
-            : "- No hay checkout local del repositorio: trabajá con el diff.\n");
+        if (context.Checkout is { Kind: CheckoutKind.Managed } managed)
+        {
+            sb.Append("- El directorio actual es el proyecto en la rama de destino `").Append(managed.BaseBranch).Append("` (commit ")
+                .Append(CommitHashes.Short(managed.BaseCommit)).Append("), tal como está hoy. El diff muestra los cambios que el PR propone sobre esa base: ")
+                .Append("leé el código que necesites para juzgar su impacto. Para comparar podés usar `git diff origin/")
+                .Append(managed.BaseBranch).Append("...origin/").Append(pr.SourceBranch).Append("`.\n");
+        }
+        else
+        {
+            sb.Append(context.HasCheckout
+                ? "- El directorio actual es el repositorio: leé el código que necesites para entender el cambio.\n"
+                : "- No hay checkout del repositorio: trabajá con el diff.\n");
+        }
         sb.Append("No modifiques archivos.\n\n");
     }
 

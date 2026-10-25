@@ -16,7 +16,7 @@ public static class DefaultPrompts
         Descripción del PR:
         {description}
 
-        Obtené el diff con `git fetch origin && git diff origin/{destination}...origin/{source}` (o hacé checkout de la rama).
+        Obtené el diff con `git diff origin/{destination}...origin/{source}` (si falta alguna rama, `git fetch origin` antes).
         Revisá correctitud, diseño y arquitectura, impacto de negocio, seguridad, performance y tests.
         Priorizá los hallazgos (bloqueante / importante / menor) e indicá archivo y línea cuando aplique.
         Voy a hacer después una revisión de arquitectura y negocio, así que señalá explícitamente

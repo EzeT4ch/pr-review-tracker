@@ -4,6 +4,7 @@ using Prt.Core.Config;
 using Prt.Core.Domain;
 using Prt.Core.Export;
 using Prt.Core.Panel;
+using Prt.Core.Repos;
 using Prt.Core.Review;
 using Prt.Core.Storage;
 using Spectre.Console;
@@ -38,9 +39,15 @@ internal sealed class App : IDisposable
             ? null
             : new ObsidianExporter(Config.VaultPath, Config.VaultFolder, ResumeCommand);
 
-    public ReviewService Review => new(Config, Store, Bitbucket, Agent, Exporter, Ui);
+    public static string ReposRoot => Path.Combine(PrtPaths.DataDir, "repos");
 
-    public PanelService Panel => new(Config, Store, Bitbucket, Agent, Exporter, Ui, Path.Combine(PrtPaths.DataDir, "runs"));
+    public ManagedRepos Managed => new(ReposRoot, Config.Bitbucket);
+
+    public ICheckoutProvider Checkouts => new CheckoutResolver(Config, Managed);
+
+    public ReviewService Review => new(Config, Store, Bitbucket, Agent, Exporter, Ui, checkouts: Checkouts);
+
+    public PanelService Panel => new(Config, Store, Bitbucket, Agent, Exporter, Ui, Path.Combine(PrtPaths.DataDir, "runs"), checkouts: Checkouts);
 
     public void WarnIfNoVault()
     {
@@ -49,8 +56,8 @@ internal sealed class App : IDisposable
     }
 
     /// <summary>
-    /// When the repo has no local checkout mapped, offers to map one (suggesting the current directory
-    /// when it is a checkout of that repo), so agents can read the code and not only the diff.
+    /// When the repo has no local checkout mapped and prt runs inside a clone of it, offers to map that
+    /// clone. Otherwise the managed clone is used without asking (or, if disabled, a path is asked for).
     /// </summary>
     public void EnsureCheckout(PrRef prRef)
     {
@@ -62,6 +69,8 @@ internal sealed class App : IDisposable
             Ui.Warn($"El checkout asociado a {repoKey} ya no existe: {stale}");
 
         var detected = GitCheckout.FindFor(Directory.GetCurrentDirectory(), repoKey);
+        if (detected is null && Config.ManagedClones)
+            return;
         var question = detected is null
             ? $"{repoKey} no tiene checkout local asociado (sin él los agentes solo ven el diff). ¿Asociarlo ahora?"
             : $"{repoKey} no tiene checkout local asociado. ¿Asociarlo a {detected}?";

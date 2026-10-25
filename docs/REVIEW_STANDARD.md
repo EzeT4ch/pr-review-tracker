@@ -17,7 +17,7 @@ Los revisores corren en paralelo y en modo **solo lectura**. Cada uno recibe:
 
 - el **diff** del PR (descargado de Bitbucket) y un archivo con descripción, ramas y commits;
 - el **contexto del proyecto** (`context.md`) y los documentos listados en `review.json → contextFiles`;
-- el **checkout local** como directorio de trabajo, si está asociado con `prt map`;
+- como directorio de trabajo, el **checkout local** si está asociado (`prt map` o la página Repos de la web), o si no el **clon gestionado por prt** en la punta de la rama de destino del PR, para juzgar el cambio contra el proyecto tal como está hoy (la base queda registrada en el reporte);
 - en pasadas siguientes, **sus hallazgos anteriores**, para marcar cada uno como `still_open` o `resolved` conservando su id.
 
 ## 2. Severidades

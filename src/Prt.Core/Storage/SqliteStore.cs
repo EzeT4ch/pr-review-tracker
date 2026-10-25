@@ -184,11 +184,14 @@ public sealed class SqliteStore : IDisposable
 
     // ---- Panel runs ----------------------------------------------------------------------
 
-    public ReviewRun StartRun(long prId, string? headCommit, DateTimeOffset? startedAt = null)
+    public ReviewRun StartRun(long prId, string? headCommit, DateTimeOffset? startedAt = null, string? baseBranch = null, string? baseCommit = null)
     {
         var id = Scalar<long>(
-            "INSERT INTO review_runs (pr_id, started_at, head_commit) VALUES ($pr, $start, $head); SELECT last_insert_rowid();",
-            ("$pr", prId), ("$start", Format(startedAt ?? Now)), ("$head", headCommit));
+            """
+            INSERT INTO review_runs (pr_id, started_at, head_commit, base_branch, base_commit) VALUES ($pr, $start, $head, $bb, $bc);
+            SELECT last_insert_rowid();
+            """,
+            ("$pr", prId), ("$start", Format(startedAt ?? Now)), ("$head", headCommit), ("$bb", baseBranch), ("$bc", baseCommit));
         return Query(RunSelect + " WHERE id = $id", ReadRun, ("$id", id)).Single();
     }
 
@@ -308,7 +311,7 @@ public sealed class SqliteStore : IDisposable
         Reviewer = r.IsDBNull(9) ? null : r.GetString(9),
     };
 
-    private const string RunSelect = "SELECT id, pr_id, started_at, ended_at, head_commit, verdict FROM review_runs";
+    private const string RunSelect = "SELECT id, pr_id, started_at, ended_at, head_commit, verdict, base_branch, base_commit FROM review_runs";
 
     private static ReviewRun ReadRun(SqliteDataReader r) => new()
     {
@@ -318,6 +321,8 @@ public sealed class SqliteStore : IDisposable
         EndedAt = r.IsDBNull(3) ? null : Parse(r.GetString(3)),
         HeadCommit = r.IsDBNull(4) ? null : r.GetString(4),
         Verdict = r.IsDBNull(5) ? null : r.GetString(5),
+        BaseBranch = r.IsDBNull(6) ? null : r.GetString(6),
+        BaseCommit = r.IsDBNull(7) ? null : r.GetString(7),
     };
 
     private const string ResultSelect =

@@ -21,6 +21,7 @@ var root = new RootCommand(
 {
     SetupCommands.Init(),
     SetupCommands.Map(),
+    SetupCommands.Repos(),
     ReviewCommands.Review(),
     ReviewCommands.Resume(),
     PanelCommands.Analyze(),

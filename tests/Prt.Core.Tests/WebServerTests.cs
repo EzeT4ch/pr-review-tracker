@@ -21,11 +21,14 @@ public sealed class WebServerTests : IAsyncLifetime
     private WebApplication _app = null!;
     private HttpClient _http = null!;
     private string _db = null!;
+    private int _saves;
 
     public async Task InitializeAsync()
     {
         _db = Path.Combine(_dir.Path, "prt.db");
         _config.VaultPath = Path.Combine(_dir.Path, "vault");
+        // These tests use no git remote: the code source is covered by the repos tests.
+        _config.ManagedClones = false;
         _runner.OnCaptured = _ => new ProcessResult(0, JsonSerializer.Serialize(new
         {
             result = """{"reviewer":"security","verdict":"request_changes","summary":"Falta validar.","findings":[{"id":"SEC-1","severity":"major","title":"Entrada sin validar","file":"src/Pay.cs","line":3,"description":"Se usa <b>id</b> sin validar.","recommendation":"Validar."}],"questions":["¿Es público?"]}""",
@@ -34,8 +37,10 @@ public sealed class WebServerTests : IAsyncLifetime
         var context = new WebContext
         {
             LoadConfig = () => _config,
+            SaveConfig = _ => _saves++,
             DatabasePath = _db,
             RunsRoot = Path.Combine(_dir.Path, "runs"),
+            ReposRoot = Path.Combine(_dir.Path, "repos"),
             Bitbucket = _ => _bitbucket,
             Agent = (config, name) => AgentFactory.Create(name, config, _runner),
         };
@@ -167,6 +172,33 @@ public sealed class WebServerTests : IAsyncLifetime
         using var request = new HttpRequestMessage(HttpMethod.Post, "/api/shutdown");
         request.Headers.Add(PrtWebServer.TokenHeader, Token);
         Assert.Equal(HttpStatusCode.Accepted, (await _http.SendAsync(request)).StatusCode);
+    }
+
+    [Fact]
+    public async Task Repos_page_maps_and_unmaps_a_local_checkout()
+    {
+        await Post("/track", ("csrf", Token), ("pr", "acme/api#42"), ("action", "sync"));
+        await WaitForJob(Ref);
+        var checkout = Directory.CreateDirectory(Path.Combine(_dir.Path, "checkout")).FullName;
+
+        var page = await _http.GetStringAsync("/repos");
+        Assert.Contains("acme/api", page);
+        Assert.Contains("solo el diff", page);
+
+        Assert.Equal(HttpStatusCode.Forbidden, (await Post("/repos/acme/api", ("action", "local"), ("path", checkout))).StatusCode);
+
+        var missing = await (await Post("/repos/acme/api", ("csrf", Token), ("action", "local"), ("path", "/no/existe"))).Content.ReadAsStringAsync();
+        Assert.Contains("no existe en esta máquina", missing);
+        Assert.Empty(_config.RepoPaths);
+
+        var mapped = await (await Post("/repos/acme/api", ("csrf", Token), ("action", "local"), ("path", checkout))).Content.ReadAsStringAsync();
+        Assert.Contains("usa ahora el checkout local", mapped);
+        Assert.Equal(checkout, _config.RepoPaths["acme/api"]);
+        Assert.Contains($"checkout local <code>{checkout}</code>", await _http.GetStringAsync("/pr/acme/api/42"));
+
+        await Post("/repos/acme/api", ("csrf", Token), ("action", "managed"));
+        Assert.Empty(_config.RepoPaths);
+        Assert.Equal(2, _saves);
     }
 
     [Fact]

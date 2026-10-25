@@ -204,8 +204,10 @@ internal static class WebCommands
     private static WebContext Context() => new()
     {
         LoadConfig = () => ConfigStore.Load(),
+        SaveConfig = config => ConfigStore.Save(config),
         DatabasePath = PrtPaths.DatabaseFile,
         RunsRoot = Path.Combine(PrtPaths.DataDir, "runs"),
+        ReposRoot = App.ReposRoot,
         Bitbucket = config => new BitbucketClient(BitbucketHttp, config.Bitbucket),
         Agent = (config, name) => AgentFactory.Create(name, config, new ProcessRunner()),
     };

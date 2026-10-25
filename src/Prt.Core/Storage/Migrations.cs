@@ -96,6 +96,10 @@ internal static class Migrations
         );
         CREATE INDEX ix_reviewer_results_run ON reviewer_results (run_id);
         """,
+        """
+        ALTER TABLE review_runs ADD COLUMN base_branch TEXT;
+        ALTER TABLE review_runs ADD COLUMN base_commit TEXT;
+        """,
     ];
 
     public static int LatestVersion => Steps.Length;

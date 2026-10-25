@@ -3,6 +3,7 @@ using Prt.Core.Bitbucket;
 using Prt.Core.Config;
 using Prt.Core.Domain;
 using Prt.Core.Export;
+using Prt.Core.Repos;
 using Prt.Core.Storage;
 
 namespace Prt.Core.Review;
@@ -43,8 +44,10 @@ public sealed class ReviewService(
     Func<string, IAgentAdapter> agents,
     ObsidianExporter? exporter,
     IReviewUi ui,
-    TimeProvider? clock = null)
+    TimeProvider? clock = null,
+    ICheckoutProvider? checkouts = null)
 {
+    private readonly ICheckoutProvider _checkouts = checkouts ?? new LocalCheckouts(config);
     private readonly TimeProvider _clock = clock ?? TimeProvider.System;
     private readonly PullRequestSync _sync = new(store, bitbucket, ui);
 
@@ -53,7 +56,7 @@ public sealed class ReviewService(
         var adapter = agents(options.Agent);
         var (pr, commits) = await RefreshAsync(prRef, ct);
         var head = commits.FirstOrDefault()?.Hash ?? pr.LastReviewedCommit;
-        var cwd = config.RepoPathFor(prRef.RepoKey) ?? Directory.GetCurrentDirectory();
+        var cwd = (await _checkouts.ResolveAsync(pr, ui, ct))?.Path ?? Directory.GetCurrentDirectory();
 
         var session = options.ForceNewSession ? null : store.GetDefaultSession(pr.Id, options.Agent, options.Reviewer);
         if (session is null && options.Reviewer is not null)
