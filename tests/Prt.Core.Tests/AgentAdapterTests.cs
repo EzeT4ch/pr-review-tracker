@@ -199,4 +199,15 @@ public class AgentAdapterTests
         Assert.True(args.IndexOf("--allowedTools") < args.IndexOf("--resume"));
         Assert.Equal(["--output-format", "json", "prompt"], args[^3..]);
     }
+
+    [Fact]
+    public void Captured_output_is_decoded_as_utf8_whatever_the_console_code_page()
+    {
+        var info = ProcessRunner.CreateCapturedStartInfo("dotnet", ["--version"], ".");
+
+        Assert.True(info.RedirectStandardOutput && info.RedirectStandardError && info.RedirectStandardInput);
+        Assert.Equal(65001, info.StandardOutputEncoding?.CodePage);
+        Assert.Equal(65001, info.StandardErrorEncoding?.CodePage);
+        Assert.Empty(info.StandardOutputEncoding!.GetPreamble());
+    }
 }

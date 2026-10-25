@@ -75,6 +75,7 @@ prt link acme/payments#42 --agent claude --session <id>   # asociar una sesión 
 prt tag acme/payments#42 arquitectura pagos
 prt sync                                       # refrescar PRs abiertos desde Bitbucket
 prt export                                     # regenerar todas las notas
+prt repair-text [pr] [--dry-run]               # reparar acentos rotos (UTF-8 leído como CP850) ya guardados
 ```
 
 `prt review` sin `--agent` usa el agente de la última sesión del PR (para retomar la misma), o el agente por defecto si el PR es nuevo.

@@ -100,7 +100,7 @@ public sealed partial class ObsidianExporter
         sb.Append(before).Append(BeginMarker).Append('\n');
         sb.Append("# Análisis del panel · ").Append(pr.Key).Append(" · ").Append(Display(view.Run.StartedAt)).Append("\n\n");
         sb.Append("PR: [[").Append(NoteLink(pr)).Append("|").Append(pr.Key).Append(" — ").Append(pr.Title).Append("]]\n\n");
-        sb.Append(ReportRenderer.Render(view, Display));
+        sb.Append(ReportRenderer.Render(view, Display, links: true));
         sb.Append(EndMarker).Append(previous is null ? "\n" : after);
         if (sb[^1] != '\n')
             sb.Append('\n');
@@ -214,7 +214,7 @@ public sealed partial class ObsidianExporter
         if (pr.Description.Trim().Length > 0)
         {
             sb.Append("> [!quote]- Descripción del PR\n");
-            AppendQuoted(sb, MemoText.NestHeadings(pr.Description.Trim(), 4));
+            AppendQuoted(sb, MarkdownText.Prose(MemoText.NestHeadings(pr.Description.Trim(), 4)));
             sb.Append('\n');
         }
 
@@ -228,10 +228,10 @@ public sealed partial class ObsidianExporter
             {
                 sb.Append("| ").Append(s.Reviewer ?? "revisión")
                     .Append(" | ").Append(s.Agent).Append(s.IsDefault ? " ⭐" : "")
-                    .Append(" | `").Append(s.AgentSessionId).Append('`')
+                    .Append(" | ").Append(MarkdownText.CodeCell(s.AgentSessionId))
                     .Append(" | ").Append(Display(s.StartedAt))
                     .Append(" | ").Append(Display(s.LastUsedAt))
-                    .Append(" | `").Append(Cell(_resumeCommand(s.Agent, s.AgentSessionId))).Append("` |\n");
+                    .Append(" | ").Append(MarkdownText.CodeCell(_resumeCommand(s.Agent, s.AgentSessionId))).Append(" |\n");
             }
             sb.Append('\n');
         }
@@ -243,7 +243,7 @@ public sealed partial class ObsidianExporter
         sb.Append("## Pendientes\n\n");
         sb.Append(pending is null
             ? "_Sin pendientes registrados._\n\n"
-            : $"_Según el último resumen ({Display(latestSummary!.CreatedAt)})._\n\n{MemoText.NestHeadings(pending, 3)}\n\n");
+            : $"_Según el último resumen ({Display(latestSummary!.CreatedAt)})._\n\n{MarkdownText.Prose(MemoText.NestHeadings(pending, 3))}\n\n");
 
         sb.Append("## Timeline\n\n");
         var entries = TimelineEntries(h);
@@ -280,24 +280,16 @@ public sealed partial class ObsidianExporter
             .Append(" · [[").Append(RunLink(h.Pr, latest.Run)).Append("|Reporte completo]]\n\n");
         sb.Append(ReportRenderer.CountsLine(latest)).Append("\n\n");
 
-        var open = latest.OpenFindings.Where(x => x.Finding.Severity >= Severity.Minor).ToList();
+        var open = latest.OpenFindings.Where(x => x.Finding.Severity >= Severity.Minor).Select(x => x.Finding).ToList();
         if (open.Count > 0)
-        {
-            sb.Append("| | ID | Revisor | Hallazgo | Ubicación |\n|---|---|---|---|---|\n");
-            foreach (var (reviewer, f) in open)
-            {
-                sb.Append("| ").Append(ReviewStandard.Icon(f.Severity)).Append(" | ").Append(f.Id).Append(" | ").Append(reviewer)
-                    .Append(" | ").Append(Cell(f.Title)).Append(" | ").Append(f.Location.Length > 0 ? $"`{Cell(f.Location)}`" : "").Append(" |\n");
-            }
-            sb.Append('\n');
-        }
+            sb.Append(ReportRenderer.FindingsTable(open, RunLink(h.Pr, latest.Run), withStatus: false)).Append('\n');
 
         var questions = latest.Questions.ToList();
         if (questions.Count > 0)
         {
             sb.Append("**Preguntas para vos:**\n\n");
             foreach (var (reviewer, q) in questions)
-                sb.Append("- [ ] **").Append(reviewer).Append(":** ").Append(q.ReplaceLineEndings(" ")).Append('\n');
+                sb.Append("- [ ] **").Append(reviewer).Append(":** ").Append(MarkdownText.Prose(q.ReplaceLineEndings(" "))).Append('\n');
             sb.Append('\n');
         }
 
@@ -358,7 +350,7 @@ public sealed partial class ObsidianExporter
         };
         sb.Append("> [!").Append(callout).Append("] ").Append(MemoKinds.Label(memo.Kind))
             .Append(" · ").Append(Local(memo.CreatedAt).ToString("HH:mm", CultureInfo.InvariantCulture)).Append('\n');
-        AppendQuoted(sb, MemoText.NestHeadings(memo.Body, 4));
+        AppendQuoted(sb, MarkdownText.Prose(MemoText.NestHeadings(memo.Body, 4)));
         sb.Append('\n');
     }
 
@@ -389,9 +381,9 @@ public sealed partial class ObsidianExporter
                 var pr = h.Pr;
                 var link = NoteLink(pr);
                 sb.Append("| [[").Append(link).Append("\\|").Append(pr.Key).Append("]]")
-                    .Append(" | ").Append(Cell(pr.Title))
-                    .Append(" | ").Append(Cell(pr.Author))
-                    .Append(" | ").Append(Cell(pr.Verdict ?? ""))
+                    .Append(" | ").Append(MarkdownText.Cell(pr.Title))
+                    .Append(" | ").Append(MarkdownText.Cell(pr.Author))
+                    .Append(" | ").Append(MarkdownText.Cell(pr.Verdict ?? ""))
                     .Append(" | ").Append(h.Runs.Count == 0 ? "" : OpenSummary(RunView.From(h.Runs[^1])))
                     .Append(" | ").Append(LastReview(h) is { } last ? Display(last) : "")
                     .Append(" | ").Append(h.Rounds.Count).Append(" |\n");
@@ -473,8 +465,6 @@ public sealed partial class ObsidianExporter
         Local(value).ToString("yyyy-MM-dd HH:mm", CultureInfo.InvariantCulture);
 
     private static string Or(string value, string fallback) => value.Length > 0 ? value : fallback;
-
-    private static string Cell(string value) => value.ReplaceLineEndings(" ").Replace("|", "\\|");
 
     private static void Yaml(StringBuilder sb, string key, string value) =>
         sb.Append(key).Append(": ").Append(Quote(value)).Append('\n');

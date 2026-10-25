@@ -256,6 +256,48 @@ public sealed class SqliteStore : IDisposable
         return new PrHistory(pr, ListSessions(prId), ListRounds(prId), ListMemos(prId), ListTags(prId), ListRuns(prId));
     }
 
+    // ---- Maintenance ---------------------------------------------------------------------
+
+    /// <summary>
+    /// Applies <paramref name="fix"/> to the text that came from agents (memos and reviewer results), of one PR or all,
+    /// and returns how many rows changed. With <paramref name="dryRun"/> nothing is written.
+    /// </summary>
+    public TextRewrite RewriteText(Func<string, string> fix, long? prId = null, bool dryRun = false)
+    {
+        var memos = Query("SELECT id, body FROM memos WHERE $pr IS NULL OR pr_id = $pr",
+                r => (Id: r.GetInt64(0), Body: r.GetString(1)), ("$pr", prId))
+            .Select(m => (m.Id, Before: m.Body, Body: fix(m.Body)))
+            .Where(m => m.Body != m.Before)
+            .ToList();
+
+        var results = Query(
+                """
+                SELECT id, report_json, raw_output, error FROM reviewer_results
+                WHERE $pr IS NULL OR run_id IN (SELECT id FROM review_runs WHERE pr_id = $pr)
+                """,
+                r => (Id: r.GetInt64(0), Report: Text(r, 1), Raw: Text(r, 2), Error: Text(r, 3)), ("$pr", prId))
+            .Select(x => (Before: x, After: (x.Id, Report: Fix(x.Report), Raw: Fix(x.Raw), Error: Fix(x.Error))))
+            .Where(x => x.Before != x.After)
+            .Select(x => x.After)
+            .ToList();
+
+        if (!dryRun)
+        {
+            InTransaction(() =>
+            {
+                foreach (var m in memos)
+                    Execute("UPDATE memos SET body = $body WHERE id = $id", ("$body", m.Body), ("$id", m.Id));
+                foreach (var x in results)
+                    Execute("UPDATE reviewer_results SET report_json = $report, raw_output = $raw, error = $error WHERE id = $id",
+                        ("$report", x.Report), ("$raw", x.Raw), ("$error", x.Error), ("$id", x.Id));
+            });
+        }
+        return new TextRewrite(memos.Count, results.Count);
+
+        string? Fix(string? value) => value is null ? null : fix(value);
+        static string? Text(SqliteDataReader r, int i) => r.IsDBNull(i) ? null : r.GetString(i);
+    }
+
     // ---- Mapping -------------------------------------------------------------------------
 
     private const string LastActivitySql =
@@ -426,3 +468,6 @@ public sealed class SqliteStore : IDisposable
         return results;
     }
 }
+
+/// <summary>Rows changed by <see cref="SqliteStore.RewriteText"/>.</summary>
+public sealed record TextRewrite(int Memos, int Results);

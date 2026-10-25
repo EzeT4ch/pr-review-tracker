@@ -11,6 +11,9 @@ if (OperatingSystem.IsWindows())
     Console.InputEncoding = Encoding.UTF8;
 }
 
+// Before the first AnsiConsole access, which captures the encoding: the OEM code page (CP850) garbles accents.
+Console.OutputEncoding = new System.Text.UTF8Encoding(encoderShouldEmitUTF8Identifier: false);
+
 // Without a terminal the detected width can be 0, which collapses every table and line.
 if (Console.IsOutputRedirected || AnsiConsole.Profile.Width < 40)
     AnsiConsole.Profile.Width = 160;
@@ -34,6 +37,7 @@ var root = new RootCommand(
     RecordCommands.Tag(),
     SyncCommands.Sync(),
     SyncCommands.Export(),
+    SyncCommands.RepairText(),
     WebCommands.Web(),
 };
 

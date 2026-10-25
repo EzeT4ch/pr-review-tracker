@@ -121,7 +121,8 @@ public sealed class PanelServiceTests : IDisposable
 
         var note = File.ReadAllText(outcome.NotePath!);
         Assert.Contains("## Panel de revisores", note);
-        Assert.Contains("| 🟠 | SEC-1 | security | Hallazgo SEC-1 | `src/Pay.cs:12` |", note);
+        Assert.Contains("| ID | Sev. | Hallazgo | Ubicación | Acción |\n", note);
+        Assert.Contains(")#^sec-1\\|SEC-1]] | 🟠 | Hallazgo SEC-1 | `Pay.cs:12` | r |\n", note);
         Assert.Contains("panel_verdict: \"CAMBIOS REQUERIDOS\"", note);
         var prFolder = Path.Combine(_config.VaultPath!, "PR Reviews", "acme", "api", "PR-42");
         Assert.Equal(prFolder, Path.GetDirectoryName(outcome.NotePath));
@@ -129,7 +130,9 @@ public sealed class PanelServiceTests : IDisposable
         Assert.Contains("PR: [[PR Reviews/acme/api/PR-42/PR-42 - Agregar pagos con QR|", File.ReadAllText(runNote));
         var report = File.ReadAllText(runNote);
         Assert.Contains("## Resultado: **CAMBIOS REQUERIDOS**", report);
+        Assert.Contains("| [[#^sec-1\\|SEC-1]] | 🟠 | Hallazgo SEC-1 | `Pay.cs:12` | r | nuevo |\n", report);
         Assert.Contains("### 🟠 SEC-1 · Hallazgo SEC-1", report);
+        Assert.Contains("**Ubicación:** `src/Pay.cs:12` · **Confianza:** alta · **Estado:** nuevo ^sec-1\n", report);
         Assert.Contains("| bugs | claude | APROBAR CON CAMBIOS | 0 | 0 | 1 | 0 | 0 |", report);
         // Reviewers are listed in profile order, whatever order they finished in.
         Assert.Equal(["architecture", "bugs", "performance", "security"], outcome.Reviewers.Select(r => r.Reviewer.Name));

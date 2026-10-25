@@ -87,8 +87,8 @@ Cada corrida genera, siempre con la misma estructura:
 
 1. **Resultado**: veredicto del panel, fecha, head y conteo por severidad.
 2. **Tabla por revisor**: agente, veredicto, hallazgos abiertos por severidad y resueltos.
-3. **Hallazgos abiertos**: ordenados por severidad, con id, revisor, título, ubicación y estado.
-4. **Detalle** de cada hallazgo: severidad, categoría, ubicación, confianza, estado, descripción y recomendación.
+3. **Hallazgos abiertos**: ordenados por severidad, en una tabla `| ID | Sev. | Hallazgo | Ubicación | Acción | Estado |`. La ubicación es `Archivo:línea`, la acción es la primera oración de la recomendación y en Obsidian el ID enlaza a su detalle (block ref `^arq-1`).
+4. **Detalle** de cada hallazgo: severidad, categoría, ubicación con la ruta completa, confianza, estado, descripción y recomendación.
 5. **Resueltos desde la pasada anterior**.
 6. **Preguntas para el revisor humano**, como checklist.
 7. **Resúmenes por revisor**, y errores si algún revisor falló.

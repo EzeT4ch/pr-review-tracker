@@ -94,6 +94,25 @@ public class ObsidianExporterTests
     }
 
     [Fact]
+    public void Memo_tables_survive_inside_the_callout_and_html_like_text_is_escaped()
+    {
+        using var dir = new TempDir();
+        var history = History();
+        Memo memo = new()
+        {
+            Id = 3, PrId = 1, RoundId = 3, Kind = MemoKinds.AgentSummary, CreatedAt = T0.AddDays(2),
+            Body = "## Hallazgos\n\n| ID | Sev. | Hallazgo | Ubicación | Acción |\n|---|---|---|---|---|\n" +
+                   "| B1 | 🔴 | Mock de IRepository<ProductCode> | `Tests.cs:36` | Usar `SetupFilter` |\n\n## Pendientes\n- [ ] revisar `List<int>` y List<int>",
+        };
+        var path = Exporter(dir.Path).ExportPr(history with { Memos = [.. history.Memos, memo] });
+
+        var text = File.ReadAllText(path);
+        Assert.Contains("> | ID | Sev. | Hallazgo | Ubicación | Acción |\n> |---|---|---|---|---|\n" +
+                        "> | B1 | 🔴 | Mock de IRepository\\<ProductCode> | `Tests.cs:36` | Usar `SetupFilter` |\n", text);
+        Assert.Contains("- [ ] revisar `List<int>` y List\\<int>\n", text);
+    }
+
+    [Fact]
     public void Index_links_notes_and_escapes_tables()
     {
         using var dir = new TempDir();
