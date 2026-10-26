@@ -38,7 +38,16 @@ internal sealed partial class Pages(WebContext context, JobRunner jobs, string t
         sb.Append("<form method=\"post\" action=\"/track\" class=\"card row\">").Append(Csrf(token))
             .Append("<input name=\"pr\" size=\"60\" placeholder=\"https://bitbucket.org/workspace/repo/pull-requests/42 o workspace/repo#42\" required>")
             .Append("<button name=\"action\" value=\"sync\">Registrar</button>")
-            .Append("<button class=\"primary\" name=\"action\" value=\"analyze\">Analizar con el panel</button></form>");
+            .Append("<button class=\"primary\" name=\"action\" value=\"analyze\">Analizar con el panel</button>");
+        try
+        {
+            sb.Append(ReviewerPicker(context.GlobalProfile().Reviewers, "Revisores globales; el proyecto puede definir otros."));
+        }
+        catch (ArgumentException)
+        {
+            // An invalid global profile only hides the picker: analyzing reports the error.
+        }
+        sb.Append("</form>");
 
         sb.Append("<form method=\"get\" class=\"row\">")
             .Append(Select("state", "Todos los estados", states, state))
@@ -140,17 +149,30 @@ internal sealed partial class Pages(WebContext context, JobRunner jobs, string t
         }
 
         sb.Append("<form method=\"post\" action=\"").Append(url).Append("/analyze\" class=\"row\" style=\"margin-top:10px\">").Append(Csrf(token));
-        foreach (var r in reviewers)
-        {
-            sb.Append("<label><input type=\"checkbox\" name=\"reviewer\" value=\"").Append(E(r.Name)).Append('"')
-                .Append(r.Enabled ? " checked" : "").Append("> ").Append(E(r.Title)).Append("</label>");
-        }
         sb.Append("<select name=\"agent\"><option value=\"\">Agente según el proyecto</option>");
         foreach (var agent in AgentNames.All)
             sb.Append("<option>").Append(agent).Append("</option>");
         sb.Append("</select><label><input type=\"checkbox\" name=\"new\"> Sesiones nuevas</label>")
             .Append("<button class=\"primary\">Analizar con el panel</button>")
-            .Append("<a href=\"").Append(Html.Url("repos", pr.Ref.Workspace, pr.Ref.Repo, "reviewers")).Append("\">configurar revisores</a></form>");
+            .Append("<a href=\"").Append(Html.Url("repos", pr.Ref.Workspace, pr.Ref.Repo, "reviewers")).Append("\">configurar revisores</a>")
+            .Append(ReviewerPicker(reviewers, null)).Append("</form>");
+    }
+
+    /// <summary>Opens a list of reviewers to run. Nothing is checked: an empty pick runs every reviewer.</summary>
+    private static string ReviewerPicker(IReadOnlyList<ReviewerDefinition> reviewers, string? note)
+    {
+        var sb = new StringBuilder("<details class=\"picker\"><summary>Elegir revisores</summary><div class=\"row\">");
+        foreach (var r in reviewers)
+        {
+            sb.Append("<label><input type=\"checkbox\" name=\"reviewer\" value=\"").Append(E(r.Name)).Append("\"> ").Append(E(r.Title));
+            if (!r.Enabled)
+                sb.Append(" <span class=\"muted\">(deshabilitado)</span>");
+            sb.Append("</label>");
+        }
+        sb.Append("</div><p class=\"muted\">Si no marcás ninguno, corren todos los revisores");
+        if (note is not null)
+            sb.Append(". ").Append(E(note));
+        return sb.Append("</p></details>").ToString();
     }
 
     private static void AppendPanel(StringBuilder sb, PrHistory h, string url)

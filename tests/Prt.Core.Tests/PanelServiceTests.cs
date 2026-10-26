@@ -141,6 +141,21 @@ public sealed class PanelServiceTests : IDisposable
     }
 
     [Fact]
+    public async Task Empty_pick_runs_every_reviewer_only_when_asked()
+    {
+        var layer = Directory.CreateDirectory(Path.Combine(_dir.Path, "layer")).FullName;
+        Directory.CreateDirectory(Path.Combine(layer, "reviewers"));
+        File.WriteAllText(Path.Combine(layer, "reviewers", "security.md"), "---\nenabled: false\n---\nfoco");
+        var profile = ProfileLoader.Load([layer]);
+
+        var enabled = await Service(profile).AnalyzeAsync(Ref, new PanelOptions());
+        var all = await Service(profile).AnalyzeAsync(Ref, new PanelOptions(AllWhenEmpty: true));
+
+        Assert.Equal(["architecture", "bugs", "performance"], enabled.Reviewers.Select(r => r.Reviewer.Name));
+        Assert.Equal(["architecture", "bugs", "performance", "security"], all.Reviewers.Select(r => r.Reviewer.Name));
+    }
+
+    [Fact]
     public async Task Second_run_resumes_each_reviewer_with_its_previous_findings()
     {
         _answers["security"] = call => call == 1

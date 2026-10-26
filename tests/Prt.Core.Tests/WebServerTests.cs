@@ -123,6 +123,27 @@ public sealed class WebServerTests : IAsyncLifetime
     }
 
     [Fact]
+    public async Task Reviewer_picker_runs_the_picked_reviewers_or_all_of_them()
+    {
+        Assert.Contains("Elegir revisores", await _http.GetStringAsync("/"));
+
+        await Post("/track", ("csrf", Token), ("pr", "acme/api#42"), ("action", "analyze"), ("reviewer", "security"));
+        await WaitForJob(Ref);
+        var page = await _http.GetStringAsync("/pr/acme/api/42");
+        Assert.Contains("Elegir revisores", page);
+        Assert.Contains("name=\"reviewer\" value=\"security\">", page);
+        Assert.DoesNotContain(" checked", page[page.IndexOf("class=\"picker\"", StringComparison.Ordinal)..]);
+
+        await Post("/pr/acme/api/42/analyze", ("csrf", Token));
+        await WaitForJob(Ref);
+
+        using var store = new SqliteStore(_db);
+        var runs = store.ListRuns(store.FindPullRequest(Ref)!.Id);
+        Assert.Equal(["security"], runs[0].Results.Select(r => r.Reviewer));
+        Assert.Equal(["architecture", "bugs", "performance", "security"], runs[1].Results.Select(r => r.Reviewer));
+    }
+
+    [Fact]
     public async Task Memos_and_tags_are_stored_and_exported()
     {
         await Post("/track", ("csrf", Token), ("pr", "acme/api#42"), ("action", "sync"));

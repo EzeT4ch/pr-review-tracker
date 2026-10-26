@@ -109,6 +109,7 @@ internal static class Html
         .verdict{font-weight:700}.v-block{color:var(--red)}.v-changes{color:var(--orange)}.v-comments{color:var(--yellow)}.v-ok{color:var(--green)}
         .tag{display:inline-block;padding:0 8px;margin-right:4px;border:1px solid var(--line);border-radius:10px;font-size:12px}
         details{margin:6px 0}summary{cursor:pointer}
+        details.picker{flex-basis:100%;margin:0}details.picker>div{padding:8px 0 0}details.picker p{margin:4px 0 0}
         .memo{border-left:3px solid var(--line);padding:2px 12px;margin:8px 0}.memo-agent_summary{border-color:var(--blue)}.memo-decision{border-color:var(--orange)}
         form.inline{display:inline}input,select,textarea,button{font:inherit;color:inherit;background:var(--bg);border:1px solid var(--line);border-radius:6px;padding:5px 8px}
         textarea{width:100%;min-height:90px}button{cursor:pointer;background:var(--card)}button.primary{background:var(--link);color:#fff;border-color:var(--link)}

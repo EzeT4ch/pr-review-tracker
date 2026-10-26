@@ -19,7 +19,8 @@ public sealed record PanelOptions(
     IReadOnlyCollection<string>? Reviewers = null,
     string? Agent = null,
     bool ForceNewSessions = false,
-    int? MaxParallel = null);
+    int? MaxParallel = null,
+    bool AllWhenEmpty = false);
 
 public sealed record ReviewerOutcome(
     ReviewerDefinition Reviewer,
@@ -64,7 +65,10 @@ public sealed class PanelService(
         var checkout = code?.Path;
 
         var profile = (loadProfile ?? ProfileLoader.Load)(prRef.RepoKey, checkout);
-        var reviewers = profile.Select(options.Reviewers);
+        // The web panel runs every defined reviewer when none is picked; the CLI keeps the enabled ones.
+        var reviewers = options.AllWhenEmpty && options.Reviewers is not { Count: > 0 }
+            ? profile.Reviewers
+            : profile.Select(options.Reviewers);
         if (reviewers.Count == 0)
             throw new ArgumentException("No hay revisores habilitados para este proyecto (revisá review.json o los archivos de revisores).");
 

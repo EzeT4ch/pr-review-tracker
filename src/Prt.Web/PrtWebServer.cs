@@ -94,7 +94,7 @@ public static class PrtWebServer
             var form = await http.Request.ReadFormAsync();
             if (!PrRef.TryParse(form["pr"], out var prRef))
                 return Write(http, pages.Home(null, null, null, $"'{form["pr"]}' no es un PR válido. Usá la URL de Bitbucket o workspace/repo#numero."));
-            StartJob(form["action"] == "analyze" ? "analyze" : "sync", prRef, new PanelOptions());
+            StartJob(form["action"] == "analyze" ? "analyze" : "sync", prRef, new PanelOptions(Reviewers(form), AllWhenEmpty: true));
             return Redirect(http, PrUrl(prRef));
         });
 
@@ -151,9 +151,8 @@ public static class PrtWebServer
         {
             var prRef = new PrRef(ws, repo, n);
             var form = await http.Request.ReadFormAsync();
-            var reviewers = form["reviewer"].Where(r => !string.IsNullOrEmpty(r)).Select(r => r!).ToList();
             var agent = form["agent"].ToString() is { Length: > 0 } a ? a : null;
-            StartJob("analyze", prRef, new PanelOptions(reviewers.Count > 0 ? reviewers : null, agent, form["new"] == "on"));
+            StartJob("analyze", prRef, new PanelOptions(Reviewers(form), agent, form["new"] == "on", AllWhenEmpty: true));
             return Redirect(http, PrUrl(prRef));
         });
 
@@ -321,6 +320,10 @@ public static class PrtWebServer
         }
         return process.PrivateMemorySize64;
     }
+
+    /// <summary>Reviewers picked in the form; null when none, which runs them all.</summary>
+    private static List<string>? Reviewers(IFormCollection form) =>
+        form["reviewer"].Where(r => !string.IsNullOrEmpty(r)).Select(r => r!).ToList() is { Count: > 0 } names ? names : null;
 
     private static bool IsLocalHost(HostString host, int port) =>
         host.Port == port && host.Host is "127.0.0.1" or "localhost";
