@@ -93,7 +93,7 @@ public class ProfileLoaderTests
         File.WriteAllText(Path.Combine(dir.Path, "standards.md"), "mío");
         var second = ProfileLoader.Scaffold(dir.Path, overwrite: false);
 
-        Assert.Equal(7, first.Count); // standards, context, review.json and the four reviewers
+        Assert.Equal(8, first.Count); // standards, context, review.json, the four reviewers and the coordination one
         Assert.Empty(second);
         Assert.Equal("mío", File.ReadAllText(Path.Combine(dir.Path, "standards.md")));
         var profile = ProfileLoader.Load([dir.Path]);

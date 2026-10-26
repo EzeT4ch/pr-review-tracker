@@ -20,7 +20,8 @@ public static partial class ReportParser
     [GeneratedRegex(@"\d+")]
     private static partial Regex FirstNumber();
 
-    public static ParseResult Parse(string answer, string reviewer, string idPrefix)
+    /// <param name="prKeys">PRs of a joint analysis; findings then carry the PR they belong to.</param>
+    public static ParseResult Parse(string answer, string reviewer, string idPrefix, IReadOnlyList<string>? prKeys = null)
     {
         var errors = new List<string>();
         var warnings = new List<string>();
@@ -86,6 +87,7 @@ public static partial class ReportParser
                     Recommendation = Text(item, "recommendation"),
                     Confidence = ParseConfidence(Text(item, "confidence")),
                     Status = ParseStatus(Text(item, "status")),
+                    Pr = prKeys is null ? null : MatchPr(Text(item, "pr"), prKeys, id, warnings),
                 });
             }
 
@@ -147,6 +149,25 @@ public static partial class ReportParser
                 // Try the next candidate.
             }
         }
+        return null;
+    }
+
+    /// <summary>The group PR a finding names: the full key, <c>repo#n</c> or a repo with a single PR in the group.</summary>
+    internal static string? MatchPr(string text, IReadOnlyList<string> prKeys, string findingId, List<string> warnings)
+    {
+        text = text.Trim();
+        if (text.Length == 0 || IsNullWord(text.ToLowerInvariant()))
+            return null;
+        var exact = prKeys.FirstOrDefault(k => string.Equals(k, text, StringComparison.OrdinalIgnoreCase));
+        if (exact is not null)
+            return exact;
+        var candidates = prKeys.Where(k =>
+            k.EndsWith("/" + text, StringComparison.OrdinalIgnoreCase)
+            || k.Split('#')[0].Equals(text, StringComparison.OrdinalIgnoreCase)
+            || k.Split('#')[0].EndsWith("/" + text, StringComparison.OrdinalIgnoreCase)).ToList();
+        if (candidates.Count == 1)
+            return candidates[0];
+        warnings.Add($"Hallazgo {findingId}: PR '{text}' no es del grupo; se toma como transversal.");
         return null;
     }
 

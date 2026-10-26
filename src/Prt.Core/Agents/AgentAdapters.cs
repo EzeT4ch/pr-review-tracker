@@ -21,7 +21,9 @@ public interface IAgentAdapter
     /// Runs a panel reviewer headless and read-only: starts a session when <paramref name="sessionId"/> is null,
     /// otherwise continues it. Returns the session id (null if the agent did not report it) and the answer.
     /// </summary>
-    Task<HeadlessResult> RunReviewAsync(string? sessionId, string prompt, string cwd, string contextDir, CancellationToken ct = default);
+    /// <param name="readDirs">Extra folders the reviewer must be able to read (the repos of a PR group).</param>
+    Task<HeadlessResult> RunReviewAsync(string? sessionId, string prompt, string cwd, string contextDir, CancellationToken ct = default,
+        IReadOnlyList<string>? readDirs = null);
 
     /// <summary>Command a human can paste to reopen the session without prt.</summary>
     string ResumeCommand(string sessionId);
@@ -68,11 +70,12 @@ public abstract class AgentAdapterBase(AgentSettings settings, IProcessRunner ru
     public async Task<string> AskAsync(string sessionId, string cwd, string prompt, CancellationToken ct = default) =>
         (await RunHeadlessAsync(Expand(Settings.AskArgs!, sessionId, prompt), cwd, ct)).Answer;
 
-    public async Task<HeadlessResult> RunReviewAsync(string? sessionId, string prompt, string cwd, string contextDir, CancellationToken ct = default)
+    public async Task<HeadlessResult> RunReviewAsync(string? sessionId, string prompt, string cwd, string contextDir, CancellationToken ct = default,
+        IReadOnlyList<string>? readDirs = null)
     {
         var id = sessionId ?? PresetSessionId();
         var template = sessionId is null ? Settings.ReviewNewArgs! : Settings.ReviewResumeArgs!;
-        var (answer, stdout) = await RunHeadlessAsync(Expand(template, id, prompt, contextDir), cwd, ct);
+        var (answer, stdout) = await RunHeadlessAsync(Expand(template, id, prompt, contextDir, readDirs), cwd, ct);
         return new HeadlessResult(id ?? ExtractSessionId(stdout), answer);
     }
 
@@ -108,17 +111,30 @@ public abstract class AgentAdapterBase(AgentSettings settings, IProcessRunner ru
     /// <summary>Session id reported in the headless output of a new session.</summary>
     protected virtual string? ExtractSessionId(string stdout) => null;
 
-    internal static List<string> Expand(IEnumerable<string> template, string? sessionId, string? prompt, string? contextDir = null)
+    internal static List<string> Expand(IEnumerable<string> template, string? sessionId, string? prompt, string? contextDir = null,
+        IReadOnlyList<string>? readDirs = null)
     {
         var args = new List<string>();
         foreach (var arg in template)
         {
             if (arg == "{prompt}" && prompt is null)
                 continue;
+            // A whole argument: one argument per folder, or none.
+            if (arg == ReadDirsPlaceholder)
+            {
+                args.AddRange(readDirs ?? []);
+                continue;
+            }
             args.Add(arg.Replace("{sessionId}", sessionId ?? "").Replace("{contextDir}", contextDir ?? "").Replace("{prompt}", prompt ?? ""));
         }
         return args;
     }
+
+    public const string ReadDirsPlaceholder = "{readDirs}";
+
+    /// <summary>Whether this agent's review templates can grant read access to extra folders.</summary>
+    public bool SupportsReadDirs =>
+        Settings.ReviewNewArgs!.Contains(ReadDirsPlaceholder) && Settings.ReviewResumeArgs!.Contains(ReadDirsPlaceholder);
 
     internal static IEnumerable<JsonElement> JsonLines(string text)
     {

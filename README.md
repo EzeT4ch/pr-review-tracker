@@ -6,6 +6,7 @@ Herramienta de terminal para darle trazabilidad a las revisiones de Pull Request
 - Cada vez que abrís la sesión se registra una **ronda**; al salir, el agente escribe un **memo** (hallazgos, riesgos de arquitectura, impacto de negocio, pendientes, veredicto) en la misma sesión, y podés sumar tu nota.
 - Si el PR recibió commits desde la última revisión, `prt` lo detecta y le pide al agente que revise solo lo nuevo.
 - **Panel de revisores** (`prt analyze`): arquitectura, bugs, performance y seguridad corren en paralelo, cada uno en su propia sesión, y responden con un **formato de reporte estándar** que es el mismo sin importar el proveedor de IA. Los revisores, el estándar y el contexto se configuran **por proyecto**. Ver [docs/REVIEW_STANDARD.md](docs/REVIEW_STANDARD.md).
+- **Revisión conjunta** (`prt group`): los PRs de varios repos que implementan una misma feature se agrupan y se revisan juntos. Cada revisor ve todos los PRs en una sola sesión, un revisor de **coordinación** busca contratos rotos y problemas de despliegue entre repos, y cada PR recibe su parte de los hallazgos.
 - Todo se guarda en una base SQLite local y se **exporta a Obsidian**: una nota por PR con frontmatter, sesiones, panel, pendientes y timeline, un reporte por cada análisis y un índice.
 
 ## Instalación
@@ -147,6 +148,32 @@ La página **Repos** permite asociar un checkout local, volver al clon gestionad
 
 El estándar completo (severidades, veredicto, contrato JSON, estructura del reporte y personalización) está en [docs/REVIEW_STANDARD.md](docs/REVIEW_STANDARD.md).
 
+## Revisión conjunta de PRs (grupos)
+
+Cuando una feature toca varios repos (por ejemplo API, front y una librería compartida), revisar cada PR por separado no alcanza: ningún revisor ve el otro lado de un contrato. Un **grupo** junta esos PRs y los revisa en conjunto.
+
+```bash
+prt group create feature/pagos-qr acme/api#42 acme/web#17 -d "Cobro con QR: la API expone el endpoint, la web lo consume"
+prt group add feature/pagos-qr acme/lib#5      # por id o por nombre
+prt group show feature/pagos-qr                # PRs, último análisis y PRs sugeridos
+prt group analyze feature/pagos-qr             # -r coordination,security · --agent · --new · --parallel
+prt group remove feature/pagos-qr acme/lib#5
+prt group list | prt group delete <grupo>
+```
+
+En la web: **Grupos** → crear, agregar PRs (se sugieren los PRs registrados de otros repos con la **misma rama de origen**) y *Analizar el grupo en conjunto*. Desde la página de un PR también se puede crear un grupo con ese PR.
+
+Qué cambia en el análisis:
+
+1. Se refresca cada PR, se prepara su código (checkout local o clon gestionado) y se escribe una carpeta de contexto del grupo con el diff, la descripción, los commits y el `context.md` de **cada** proyecto.
+2. Cada revisor corre en **una sola sesión para todo el grupo**, con acceso de lectura al código de todos los repos (en Claude Code, con `--add-dir` por repo). El prompt le pide revisar cada PR con su foco y, además, cómo se relacionan.
+3. Se suma el revisor **coordination** (*Coordinación entre repos*), que solo corre en grupos. Se enfoca en contratos entre repos, cambios que faltan, orden de despliegue, compatibilidad durante el despliegue parcial, versiones de paquetes compartidos y configuración compartida.
+4. Cada hallazgo indica a qué PR pertenece (`pr`), o `null` si es **transversal** (exige cambios coordinados en varios PRs).
+5. El grupo tiene su veredicto (el peor de todos). Además, cada PR recibe un análisis derivado con **sus hallazgos más los transversales** y su propio veredicto, visible en su página, en su nota y en `prt report`, marcado como *análisis conjunto*.
+6. Las sesiones se retoman entre pasadas, con los commits nuevos de cada PR. Si el grupo cambió (se agregó o quitó un PR), se empieza una sesión nueva.
+
+Los revisores y el estándar de un grupo son los **globales** (el grupo abarca varios proyectos). Para personalizar el revisor de coordinación, creá `group-reviewers/coordination.md` en `~/.config/prt/` (`prt reviewers init --scope global` lo copia), o agregá otros revisores solo para grupos en esa carpeta.
+
 ### Configurar los revisores (global y por proyecto)
 
 Cada proyecto usa por defecto la **configuración global** de prt. Solo hace falta tocar un proyecto cuando necesita algo distinto. La configuración se arma por capas, de menor a mayor prioridad; cada capa reemplaza a la anterior revisor por revisor:
@@ -246,7 +273,7 @@ Para el panel, cada agente corre en modo headless y solo lectura (`reviewNewArgs
 | Codex CLI | `codex exec --json --sandbox read-only --skip-git-repo-check` | evento `thread.started` |
 | opencode | `opencode run --format json` | campo `sessionID` de los eventos |
 
-Además de `{sessionId}` y `{prompt}`, estos templates aceptan `{contextDir}`: la carpeta con el diff y el contexto, que el agente tiene que poder leer.
+Además de `{sessionId}` y `{prompt}`, estos templates aceptan `{contextDir}`: la carpeta con el diff y el contexto, que el agente tiene que poder leer. También aceptan `{readDirs}` como argumento completo: en un análisis conjunto se reemplaza por una carpeta de código por repo del grupo (y por nada en el resto). Si sobrescribiste los templates de Claude Code, agregá `"{readDirs}"` después de `"--add-dir", "{contextDir}"` para que pueda leer todos los repos.
 
 Las CLIs cambian seguido, así que el comando y los argumentos de cada agente se pueden sobrescribir en el config (placeholders `{sessionId}` y `{prompt}`; lo que no se indique usa el valor por defecto):
 

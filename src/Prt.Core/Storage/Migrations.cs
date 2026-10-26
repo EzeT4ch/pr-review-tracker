@@ -100,6 +100,65 @@ internal static class Migrations
         ALTER TABLE review_runs ADD COLUMN base_branch TEXT;
         ALTER TABLE review_runs ADD COLUMN base_commit TEXT;
         """,
+        """
+        CREATE TABLE pr_groups (
+            id          INTEGER PRIMARY KEY,
+            name        TEXT NOT NULL UNIQUE COLLATE NOCASE,
+            description TEXT NOT NULL DEFAULT '',
+            verdict     TEXT,
+            created_at  TEXT NOT NULL,
+            updated_at  TEXT NOT NULL
+        );
+
+        CREATE TABLE pr_group_members (
+            group_id INTEGER NOT NULL REFERENCES pr_groups (id) ON DELETE CASCADE,
+            pr_id    INTEGER NOT NULL REFERENCES pull_requests (id) ON DELETE CASCADE,
+            added_at TEXT NOT NULL,
+            PRIMARY KEY (group_id, pr_id)
+        );
+        CREATE INDEX ix_pr_group_members_pr ON pr_group_members (pr_id);
+
+        CREATE TABLE group_runs (
+            id         INTEGER PRIMARY KEY,
+            group_id   INTEGER NOT NULL REFERENCES pr_groups (id) ON DELETE CASCADE,
+            started_at TEXT NOT NULL,
+            ended_at   TEXT,
+            verdict    TEXT,
+            members    TEXT NOT NULL DEFAULT ''
+        );
+        CREATE INDEX ix_group_runs_group ON group_runs (group_id);
+
+        CREATE TABLE group_sessions (
+            id               INTEGER PRIMARY KEY,
+            group_id         INTEGER NOT NULL REFERENCES pr_groups (id) ON DELETE CASCADE,
+            reviewer         TEXT NOT NULL,
+            agent            TEXT NOT NULL,
+            agent_session_id TEXT NOT NULL,
+            cwd              TEXT NOT NULL DEFAULT '',
+            members          TEXT NOT NULL DEFAULT '',
+            started_at       TEXT NOT NULL,
+            last_used_at     TEXT NOT NULL,
+            UNIQUE (agent, agent_session_id)
+        );
+        CREATE INDEX ix_group_sessions_group ON group_sessions (group_id);
+
+        CREATE TABLE group_results (
+            id          INTEGER PRIMARY KEY,
+            run_id      INTEGER NOT NULL REFERENCES group_runs (id) ON DELETE CASCADE,
+            reviewer    TEXT NOT NULL,
+            agent       TEXT NOT NULL,
+            session_id  INTEGER REFERENCES group_sessions (id) ON DELETE SET NULL,
+            status      TEXT NOT NULL,
+            report_json TEXT,
+            raw_output  TEXT,
+            error       TEXT,
+            started_at  TEXT NOT NULL,
+            ended_at    TEXT NOT NULL
+        );
+        CREATE INDEX ix_group_results_run ON group_results (run_id);
+
+        ALTER TABLE review_runs ADD COLUMN group_run_id INTEGER REFERENCES group_runs (id) ON DELETE SET NULL;
+        """,
     ];
 
     public static int LatestVersion => Steps.Length;

@@ -60,6 +60,29 @@ public sealed record ReviewProfile(
     /// <summary>The <c>reviewers</c> list of review.json, when a layer defines it (it decides which run and their order).</summary>
     public IReadOnlyList<string>? ExplicitReviewers { get; init; }
 
+    /// <summary>
+    /// Reviewers that only run in the joint analysis of a PR group (coordination between repos), from
+    /// <c>group-reviewers/*.md</c>. They follow the same file format as the panel reviewers.
+    /// </summary>
+    public IReadOnlyList<ReviewerDefinition> GroupReviewers { get; init; } = [];
+
+    /// <summary>Reviewers of a joint analysis: the requested names (panel or group reviewers), or every enabled one.</summary>
+    public IReadOnlyList<ReviewerDefinition> SelectForGroup(IReadOnlyCollection<string>? names)
+    {
+        // Panel reviewers first, coordination last; a group reviewer replaces a panel one with the same name.
+        var all = Reviewers.Where(r => !GroupReviewers.Any(g => g.Name.Equals(r.Name, StringComparison.OrdinalIgnoreCase)))
+            .Concat(GroupReviewers).ToList();
+        if (names is null || names.Count == 0)
+            return all.Where(r => r.Enabled).ToList();
+
+        var byName = all.ToDictionary(r => r.Name, StringComparer.OrdinalIgnoreCase);
+        var unknown = names.Where(n => !byName.ContainsKey(n)).ToList();
+        if (unknown.Count > 0)
+            throw new ArgumentException(
+                $"Revisor(es) desconocido(s): {string.Join(", ", unknown)}. Disponibles: {string.Join(", ", all.Select(r => r.Name))}.");
+        return all.Where(r => names.Contains(r.Name, StringComparer.OrdinalIgnoreCase)).ToList();
+    }
+
     /// <summary>The <c>agents</c> map of review.json (reviewer → agent), which wins over the reviewer files.</summary>
     public IReadOnlyDictionary<string, string> AgentOverrides { get; init; } = new Dictionary<string, string>();
 
@@ -89,6 +112,7 @@ public static class ProfileLoader
 {
     public const string BuiltInSource = "incorporado";
     public const string FolderName = ".prt";
+    public const string GroupReviewersFolder = "group-reviewers";
 
     internal static readonly JsonSerializerOptions JsonOptions = new()
     {
@@ -140,6 +164,9 @@ public static class ProfileLoader
         var reviewers = new Dictionary<string, ReviewerDefinition>(StringComparer.OrdinalIgnoreCase);
         foreach (var (name, text) in BuiltIn.Reviewers)
             reviewers[name] = ParseReviewer(text, BuiltInSource, name);
+        var groupReviewers = new Dictionary<string, ReviewerDefinition>(StringComparer.OrdinalIgnoreCase);
+        foreach (var (name, text) in BuiltIn.GroupReviewers)
+            groupReviewers[name] = ParseReviewer(text, BuiltInSource, name);
 
         var standards = BuiltIn.Standards;
         var contexts = new List<string>();
@@ -156,6 +183,17 @@ public static class ProfileLoader
                 {
                     var definition = ParseReviewer(File.ReadAllText(file), file, Path.GetFileNameWithoutExtension(file));
                     reviewers[definition.Name] = definition;
+                    used = true;
+                }
+            }
+
+            var groupDir = Path.Combine(dir, GroupReviewersFolder);
+            if (Directory.Exists(groupDir))
+            {
+                foreach (var file in Directory.EnumerateFiles(groupDir, "*.md").Order(StringComparer.Ordinal))
+                {
+                    var definition = ParseReviewer(File.ReadAllText(file), file, Path.GetFileNameWithoutExtension(file));
+                    groupReviewers[definition.Name] = definition;
                     used = true;
                 }
             }
@@ -204,7 +242,11 @@ public static class ProfileLoader
                 .ToList();
         }
 
-        foreach (var agent in ordered.Select(r => r.Agent).Append(settings.DefaultAgent).OfType<string>())
+        var groupOrdered = groupReviewers.Values
+            .Select(r => settings.Agents?.GetValueOrDefault(r.Name) is { } agent ? r with { Agent = agent } : r)
+            .OrderBy(r => r.Order).ThenBy(r => r.Name, StringComparer.Ordinal).ToList();
+
+        foreach (var agent in ordered.Concat(groupOrdered).Select(r => r.Agent).Append(settings.DefaultAgent).OfType<string>())
         {
             if (!AgentNames.All.Contains(agent, StringComparer.OrdinalIgnoreCase))
                 throw new ArgumentException($"Agente desconocido '{agent}' en la configuración de revisores. Opciones: {string.Join(", ", AgentNames.All)}.");
@@ -220,6 +262,7 @@ public static class ProfileLoader
             usedLayers)
         {
             ExplicitReviewers = settings.Reviewers,
+            GroupReviewers = groupOrdered,
             AgentOverrides = settings.Agents ?? new Dictionary<string, string>(),
         };
     }
@@ -250,6 +293,8 @@ public static class ProfileLoader
         }, JsonOptions) + "\n");
         foreach (var (name, text) in BuiltIn.Reviewers)
             Write(Path.Combine("reviewers", name + ".md"), text);
+        foreach (var (name, text) in BuiltIn.GroupReviewers)
+            Write(Path.Combine(GroupReviewersFolder, name + ".md"), text);
         return written;
     }
 
@@ -317,10 +362,14 @@ public static class ProfileLoader
         public static string Standards => Read("standards.md");
         public static string Context => Read("context.md");
 
-        public static IEnumerable<(string Name, string Text)> Reviewers =>
+        public static IEnumerable<(string Name, string Text)> Reviewers => Folder("reviewers");
+
+        public static IEnumerable<(string Name, string Text)> GroupReviewers => Folder(GroupReviewersFolder);
+
+        private static IEnumerable<(string Name, string Text)> Folder(string folder) =>
             Assembly.GetManifestResourceNames()
                 .Select(n => n.Replace('\\', '/'))
-                .Where(n => n.StartsWith("defaults/reviewers/", StringComparison.Ordinal))
+                .Where(n => n.StartsWith($"defaults/{folder}/", StringComparison.Ordinal))
                 .Order(StringComparer.Ordinal)
                 .Select(n => (Path.GetFileNameWithoutExtension(n), Read(n["defaults/".Length..])));
 

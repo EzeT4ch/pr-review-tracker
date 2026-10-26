@@ -14,6 +14,15 @@ public sealed record RunView(ReviewRun Run, IReadOnlyList<(ReviewerResult Result
         history.Run,
         history.Results.Select(r => (r, r.ReportJson is { } json ? TryDecode(json) : null)).ToList());
 
+    /// <summary>A joint analysis of a PR group, shown with the same views as a PR run.</summary>
+    public static RunView From(GroupRunHistory history) => From(new RunHistory(
+        new ReviewRun
+        {
+            Id = history.Run.Id, StartedAt = history.Run.StartedAt, EndedAt = history.Run.EndedAt, Verdict = history.Run.Verdict,
+            GroupRunId = history.Run.Id,
+        },
+        history.Results));
+
     public IEnumerable<ReviewerReport> Reports => Reviewers.Select(r => r.Report).OfType<ReviewerReport>();
 
     public IEnumerable<(string Reviewer, Finding Finding)> OpenFindings =>
@@ -27,6 +36,9 @@ public sealed record RunView(ReviewRun Run, IReadOnlyList<(ReviewerResult Result
         Reports.SelectMany(r => r.Questions.Select(q => (r.Reviewer, q)));
 
     public int Count(Severity severity) => OpenFindings.Count(x => x.Finding.Severity == severity);
+
+    /// <summary>Whether the run comes from a joint analysis of a PR group, so its findings are shown by PR.</summary>
+    public bool IsJoint => Run.GroupRunId is not null || Reports.Any(r => r.Findings.Any(f => f.Pr is not null));
 
     private static ReviewerReport? TryDecode(string json)
     {
@@ -90,7 +102,15 @@ public static partial class ReportRenderer
             sb.Append("_Sin hallazgos abiertos._\n\n");
         else
         {
-            sb.Append(FindingsTable(open.Select(x => x.Finding), links ? "" : null, withStatus: true)).Append('\n');
+            if (view.IsJoint)
+            {
+                // Joint analysis of a PR group: one table per PR, then the ones that span several.
+                foreach (var (pr, findings) in ByPr(open.Select(x => x.Finding)))
+                    sb.Append(h).Append("# ").Append(pr ?? "Transversales").Append("\n\n")
+                        .Append(FindingsTable(findings, links ? "" : null, withStatus: true)).Append('\n');
+            }
+            else
+                sb.Append(FindingsTable(open.Select(x => x.Finding), links ? "" : null, withStatus: true)).Append('\n');
 
             sb.Append(h).Append(" Detalle\n\n");
             foreach (var (reviewer, f) in open)
@@ -151,6 +171,12 @@ public static partial class ReportRenderer
         return sb.ToString();
     }
 
+    /// <summary>Findings grouped by the PR they belong to (in a joint analysis); the cross-cutting ones (null) last.</summary>
+    public static IEnumerable<(string? Pr, IReadOnlyList<Finding> Findings)> ByPr(IEnumerable<Finding> findings) =>
+        findings.GroupBy(f => f.Pr, StringComparer.OrdinalIgnoreCase)
+            .OrderBy(g => g.Key is null).ThenBy(g => g.Key, StringComparer.OrdinalIgnoreCase)
+            .Select(g => (g.Key, (IReadOnlyList<Finding>)g.ToList()));
+
     /// <summary>Obsidian block id of a finding's detail (<c>ARQ-1</c> → <c>arq-1</c>).</summary>
     public static string BlockId(Finding f) => NonBlockIdChars().Replace(f.Id.ToLowerInvariant(), "-");
 
@@ -178,6 +204,8 @@ public static partial class ReportRenderer
             .Append(MarkdownText.Prose(f.Title)).Append("\n\n");
         sb.Append("**Severidad:** ").Append(ReviewStandard.Label(f.Severity))
             .Append(" · **Revisor:** ").Append(reviewer);
+        if (f.Pr is not null)
+            sb.Append(" · **PR:** ").Append(f.Pr);
         if (f.Category.Length > 0)
             sb.Append(" · **Categoría:** ").Append(MarkdownText.Prose(f.Category.ReplaceLineEndings(" ")));
         if (f.Location.Length > 0)

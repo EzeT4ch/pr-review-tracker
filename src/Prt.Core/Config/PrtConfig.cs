@@ -95,7 +95,8 @@ public static class AgentNames
 /// <summary>
 /// Command line templates for an agent CLI. Arguments may contain the placeholders
 /// <c>{sessionId}</c>, <c>{prompt}</c> and, for the panel templates, <c>{contextDir}</c> (the folder with the
-/// diff and context files the reviewer must be able to read). Agent CLIs change often, so every template
+/// diff and context files the reviewer must be able to read) and <c>{readDirs}</c> (as a whole argument: one
+/// argument per repo of a PR group the reviewer must read, or none). Agent CLIs change often, so every template
 /// can be overridden in the config file.
 /// </summary>
 public sealed class AgentSettings
@@ -124,9 +125,9 @@ public sealed class AgentSettings
             ResumeWithPromptArgs = ["--resume", "{sessionId}", "{prompt}"],
             AskArgs = ["-p", "--resume", "{sessionId}", "--output-format", "json", "{prompt}"],
             // --allowedTools and --add-dir take several values: a single-valued flag must follow them.
-            ReviewNewArgs = ["-p", "--allowedTools", ClaudeReviewTools, "--add-dir", "{contextDir}",
+            ReviewNewArgs = ["-p", "--allowedTools", ClaudeReviewTools, "--add-dir", "{contextDir}", "{readDirs}",
                 "--session-id", "{sessionId}", "--output-format", "json", "{prompt}"],
-            ReviewResumeArgs = ["-p", "--allowedTools", ClaudeReviewTools, "--add-dir", "{contextDir}",
+            ReviewResumeArgs = ["-p", "--allowedTools", ClaudeReviewTools, "--add-dir", "{contextDir}", "{readDirs}",
                 "--resume", "{sessionId}", "--output-format", "json", "{prompt}"],
         },
         AgentNames.Codex => new()

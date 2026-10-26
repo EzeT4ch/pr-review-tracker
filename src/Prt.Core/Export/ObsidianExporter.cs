@@ -119,10 +119,10 @@ public sealed partial class ObsidianExporter
 
     private string RunLink(PullRequest pr, ReviewRun run) => $"{PrFolderLink(pr)}/{RunFileName(run)}";
 
-    public string ExportIndex(IReadOnlyList<PrHistory> histories)
+    public string ExportIndex(IReadOnlyList<PrHistory> histories, IReadOnlyList<PrGroup>? groups = null)
     {
         Directory.CreateDirectory(RootDir);
-        WriteAtomic(IndexPath, RenderIndex(histories));
+        WriteAtomic(IndexPath, RenderIndex(histories, groups));
         return IndexPath;
     }
 
@@ -160,6 +160,11 @@ public sealed partial class ObsidianExporter
         Yaml(sb, "verdict", pr.Verdict ?? "");
         Yaml(sb, "last_review", LastReview(h) is { } last ? Local(last).ToString("yyyy-MM-dd'T'HH:mm", CultureInfo.InvariantCulture) : "");
         Yaml(sb, "last_reviewed_commit", CommitHashes.Short(pr.LastReviewedCommit));
+        if (h.Groups.Count > 0)
+        {
+            sb.Append("groups:");
+            AppendList(sb, h.Groups.Select(g => g.Name));
+        }
         sb.Append("rounds: ").Append(h.Rounds.Count).Append('\n');
 
         sb.Append("agents:");
@@ -208,6 +213,9 @@ public sealed partial class ObsidianExporter
         if (pr.Verdict is { Length: > 0 })
             sb.Append("> **Veredicto:** ").Append(pr.Verdict).Append('\n');
         sb.Append('\n');
+        foreach (var group in h.Groups)
+            sb.Append("> [!abstract] Parte del grupo [[").Append(GroupLink(group)).Append('|').Append(group.Name)
+                .Append("]]: se revisa en conjunto con `prt group analyze ").Append(group.Id).Append("`\n\n");
         sb.Append("Retomar la revisión: `prt review ").Append(pr.Key).Append("` · Analizar con el panel: `prt analyze ")
             .Append(pr.Key).Append("`\n\n");
 
@@ -362,12 +370,21 @@ public sealed partial class ObsidianExporter
 
     // ---- Index ---------------------------------------------------------------------------
 
-    public string RenderIndex(IReadOnlyList<PrHistory> histories)
+    public string RenderIndex(IReadOnlyList<PrHistory> histories, IReadOnlyList<PrGroup>? groups = null)
     {
         var sb = new StringBuilder();
         sb.Append("---\ntags:\n  - pr-review-index\n---\n");
         sb.Append("# Revisiones de PRs\n\n");
         sb.Append("_Generado por prt; se sobrescribe en cada export._\n\n");
+
+        if (groups is { Count: > 0 })
+        {
+            sb.Append("## Grupos (features en varios repos)\n\n| Grupo | Veredicto |\n|---|---|\n");
+            foreach (var g in groups)
+                sb.Append("| [[").Append(GroupLink(g)).Append("\\|").Append(MarkdownText.Cell(g.Name)).Append("]] | ")
+                    .Append(MarkdownText.Cell(g.Verdict ?? "")).Append(" |\n");
+            sb.Append('\n');
+        }
 
         foreach (var group in histories
                      .OrderByDescending(h => LastReview(h) ?? h.Pr.UpdatedAt)

@@ -110,6 +110,9 @@ public sealed class ReviewRun
     public string? BaseBranch { get; set; }
 
     public string? BaseCommit { get; set; }
+
+    /// <summary>Joint analysis of a PR group this run was derived from; null for a run of the PR alone.</summary>
+    public long? GroupRunId { get; set; }
 }
 
 /// <summary>What one reviewer of a run produced.</summary>
@@ -140,10 +143,58 @@ public sealed record PrHistory(
     IReadOnlyList<Round> Rounds,
     IReadOnlyList<Memo> Memos,
     IReadOnlyList<string> Tags,
-    IReadOnlyList<RunHistory>? Runs = null)
+    IReadOnlyList<RunHistory>? Runs = null,
+    IReadOnlyList<PrGroup>? Groups = null)
 {
     public IReadOnlyList<RunHistory> Runs { get; } = Runs ?? [];
+
+    /// <summary>PR groups this PR belongs to (features spanning several repos).</summary>
+    public IReadOnlyList<PrGroup> Groups { get; } = Groups ?? [];
 
     /// <summary>Sessions of the interactive review (not the panel reviewers).</summary>
     public IEnumerable<ReviewSession> ReviewSessions => Sessions.Where(s => s.Reviewer is null);
 }
+
+/// <summary>PRs of several repos that implement one feature and are reviewed together.</summary>
+public sealed class PrGroup
+{
+    public long Id { get; set; }
+    public required string Name { get; set; }
+    public string Description { get; set; } = "";
+    public string? Verdict { get; set; }
+    public DateTimeOffset CreatedAt { get; set; }
+    public DateTimeOffset UpdatedAt { get; set; }
+}
+
+/// <summary>One joint analysis of a PR group. Its reviewers see every PR of the group at once.</summary>
+public sealed class GroupRun
+{
+    public long Id { get; set; }
+    public long GroupId { get; set; }
+    public DateTimeOffset StartedAt { get; set; }
+    public DateTimeOffset? EndedAt { get; set; }
+    public string? Verdict { get; set; }
+
+    /// <summary>The PRs analysed, as <c>ws/repo#n@head</c> separated by spaces.</summary>
+    public string Members { get; set; } = "";
+}
+
+/// <summary>Agent session of one reviewer over a PR group.</summary>
+public sealed class GroupSession
+{
+    public long Id { get; set; }
+    public long GroupId { get; set; }
+    public required string Reviewer { get; set; }
+    public required string Agent { get; set; }
+    public required string AgentSessionId { get; set; }
+    public string Cwd { get; set; } = "";
+
+    /// <summary>PR keys the session was started with; a session is not resumed once they change.</summary>
+    public string Members { get; set; } = "";
+
+    public DateTimeOffset StartedAt { get; set; }
+    public DateTimeOffset LastUsedAt { get; set; }
+}
+
+/// <summary>Results reuse <see cref="ReviewerResult"/>: <see cref="ReviewerResult.RunId"/> is the group run.</summary>
+public sealed record GroupRunHistory(GroupRun Run, IReadOnlyList<ReviewerResult> Results);

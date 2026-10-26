@@ -144,6 +144,50 @@ public sealed class WebServerTests : IAsyncLifetime
     }
 
     [Fact]
+    public async Task Groups_are_created_analyzed_together_and_linked_from_their_prs()
+    {
+        var web = new PrRef("acme", "web", 7);
+        await Post("/track", ("csrf", Token), ("pr", "acme/web#7"), ("action", "sync"));
+        await WaitForJob(web);
+
+        // From the PR page: a group with this PR, then the other repo's PR comes as a suggestion (same branch).
+        Assert.Contains("Crear grupo con este PR", await _http.GetStringAsync("/pr/acme/web/7"));
+        var created = await Post("/groups", ("csrf", Token), ("name", "feature/qr"), ("prs", "acme/web#7"));
+        Assert.Equal(HttpStatusCode.Redirect, created.StatusCode);
+        var url = created.Headers.Location!.ToString();
+        await Post("/track", ("csrf", Token), ("pr", "acme/api#42"), ("action", "sync"));
+        await WaitForJob(Ref);
+        var page = await _http.GetStringAsync(url);
+        Assert.Contains("Sugeridos", page);
+        Assert.Contains("Agregá al menos 2 PRs", page);
+
+        await Post(url + "/members", ("csrf", Token), ("add", "acme/api#42"));
+        page = await _http.GetStringAsync(url);
+        Assert.DoesNotContain("Sugeridos", page);
+        Assert.Contains("Elegir revisores", page);
+        Assert.Contains("value=\"coordination\"", page);
+
+        await Post(url + "/analyze", ("csrf", Token), ("reviewer", "security"));
+        var groupId = long.Parse(url.Split('/')[^1], System.Globalization.CultureInfo.InvariantCulture);
+        var job = await WaitForJob(GroupJobs.Ref(groupId));
+        Assert.Equal(JobStatus.Succeeded, job.Status);
+
+        page = await _http.GetStringAsync(url);
+        Assert.Contains("Análisis conjunto", page);
+        Assert.Contains("SEC-1", page);
+        Assert.Contains("Transversales", page);
+        Assert.Contains("Análisis conjunto", await _http.GetStringAsync(url + "/run/1"));
+        var prPage = await _http.GetStringAsync("/pr/acme/api/42");
+        Assert.Contains("Parte del grupo", prPage);
+        Assert.Contains("análisis conjunto", prPage);
+        Assert.Contains("feature/qr", await _http.GetStringAsync("/groups"));
+
+        await Post(url + "/delete", ("csrf", Token));
+        Assert.Contains("Todavía no hay grupos", await _http.GetStringAsync("/groups"));
+        Assert.DoesNotContain("Parte del grupo", await _http.GetStringAsync("/pr/acme/api/42"));
+    }
+
+    [Fact]
     public async Task Memos_and_tags_are_stored_and_exported()
     {
         await Post("/track", ("csrf", Token), ("pr", "acme/api#42"), ("action", "sync"));

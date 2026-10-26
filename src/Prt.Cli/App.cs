@@ -49,6 +49,8 @@ internal sealed class App : IDisposable
 
     public PanelService Panel => new(Config, Store, Bitbucket, Agent, Exporter, Ui, Path.Combine(PrtPaths.DataDir, "runs"), checkouts: Checkouts);
 
+    public GroupPanelService GroupPanel => new(Config, Store, Bitbucket, Agent, Exporter, Ui, Path.Combine(PrtPaths.DataDir, "runs"), checkouts: Checkouts);
+
     public void WarnIfNoVault()
     {
         if (Exporter is null)

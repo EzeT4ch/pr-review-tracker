@@ -41,7 +41,7 @@ internal static class PanelCommands
 
             AnsiConsole.WriteLine();
             var history = app.Store.GetHistory(outcome.Pr.Id);
-            RenderRun(outcome.Pr, RunView.From(history.Runs[^1]));
+            RenderRun(outcome.Pr.Key, RunView.From(history.Runs[^1]));
             if (outcome.NotePath is not null)
                 app.Ui.Info($"Nota: {outcome.NotePath}");
             app.Ui.Info($"Para discutir un hallazgo con su revisor: prt review {outcome.Pr.Key} --reviewer <nombre>");
@@ -95,7 +95,7 @@ internal static class PanelCommands
             else if (result.GetValue(markdown))
                 Console.WriteLine(ReportRenderer.Render(view, ReportRenderer.DefaultDate));
             else
-                RenderRun(target, view);
+                RenderRun(target.Key, view);
             return Task.CompletedTask;
         }));
         return command;
@@ -125,6 +125,14 @@ internal static class PanelCommands
             {
                 table.AddRow(
                     Markup.Escape(r.Name), Markup.Escape(r.Title), r.IdPrefix,
+                    Markup.Escape(r.Agent ?? profile.DefaultAgent ?? app.Config.DefaultAgent),
+                    r.Enabled ? "sí" : "[grey]no[/]",
+                    Markup.Escape(r.Source));
+            }
+            foreach (var r in profile.GroupReviewers)
+            {
+                table.AddRow(
+                    Markup.Escape(r.Name), Markup.Escape(r.Title + " (solo grupos)"), r.IdPrefix,
                     Markup.Escape(r.Agent ?? profile.DefaultAgent ?? app.Config.DefaultAgent),
                     r.Enabled ? "sí" : "[grey]no[/]",
                     Markup.Escape(r.Source));
@@ -171,7 +179,7 @@ internal static class PanelCommands
             foreach (var path in written)
                 app.Ui.Success(path);
             app.Ui.Info("Editá reviewers/*.md (foco y frontmatter), standards.md, context.md y review.json. " +
-                        "Podés agregar revisores nuevos creando otro archivo en reviewers/.");
+                        "Podés agregar revisores nuevos creando otro archivo en reviewers/ (o en group-reviewers/ para los que solo corren en grupos de PRs).");
             return Task.CompletedTask;
         }));
         return command;
@@ -181,9 +189,9 @@ internal static class PanelCommands
     private static string? ProfileCheckout(App app, string repoKey) =>
         app.Config.RepoPathFor(repoKey) ?? (app.Config.ManagedClones ? app.Managed.AnyWorktree(repoKey) : null);
 
-    private static void RenderRun(PullRequest pr, RunView view)
+    internal static void RenderRun(string title, RunView view)
     {
-        AnsiConsole.Write(new Rule($"[bold]{Markup.Escape(pr.Key)}[/] · panel · {Markup.Escape(view.Run.Verdict ?? "sin veredicto")}").LeftJustified());
+        AnsiConsole.Write(new Rule($"[bold]{Markup.Escape(title)}[/] · panel · {Markup.Escape(view.Run.Verdict ?? "sin veredicto")}").LeftJustified());
 
         var summary = new Table().Border(Symbols.Border).AddColumns("Revisor", "Agente", "Veredicto")
             .AddColumns(Severities.Select(s => new TableColumn(Symbols.Severity(s))).ToArray())
@@ -206,9 +214,18 @@ internal static class PanelCommands
         var open = view.OpenFindings.ToList();
         if (open.Count > 0)
         {
+            // Joint analysis of a PR group: each finding says which PR it belongs to ("transversal" when several).
+            var byPr = view.IsJoint;
             var findings = new Table().Border(TableBorder.Simple).AddColumns("", "ID", "Revisor", "Hallazgo", "Ubicación");
+            if (byPr)
+                findings.AddColumn("PR");
             foreach (var (reviewer, f) in open)
-                findings.AddRow(Symbols.Severity(f.Severity), f.Id, Markup.Escape(reviewer), Markup.Escape(f.Title), Markup.Escape(f.Location));
+            {
+                var cells = new List<string> { Symbols.Severity(f.Severity), f.Id, Markup.Escape(reviewer), Markup.Escape(f.Title), Markup.Escape(f.Location) };
+                if (byPr)
+                    cells.Add(Markup.Escape(f.Pr ?? "transversal"));
+                findings.AddRow(cells.ToArray());
+            }
             AnsiConsole.Write(findings);
         }
 

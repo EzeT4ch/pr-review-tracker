@@ -72,6 +72,18 @@ Normalización que aplica `prt`:
 - Ignora, con aviso, los hallazgos sin título ni descripción.
 - Si la respuesta no cumple el contrato, pide **una corrección** en la misma sesión. Si vuelve a fallar, el revisor queda como `formato inválido` y el panel sigue con el resto.
 
+### En un análisis conjunto (grupo de PRs)
+
+Cuando los revisores analizan un grupo de PRs de varios repos, cada hallazgo suma el campo `pr`:
+
+```json
+{ "id": "COORD-1", "...": "...", "pr": "acme/api#42 | acme/web#17 | null" }
+```
+
+- `pr` es el PR donde hay que hacer el cambio, y `file` es relativo a ese repo. `null` marca un hallazgo **transversal**, que exige cambios coordinados en varios PRs.
+- `prt` acepta la clave completa, `repo#n` o el nombre del repo, si tiene un solo PR en el grupo. Un PR que no es del grupo se toma como transversal, con aviso.
+- El veredicto del grupo es el peor de todos los revisores. Cada PR recibe un análisis derivado con sus hallazgos más los transversales, y su veredicto se calcula a partir de las severidades abiertas.
+
 ## 5. Reglas de revisión
 
 Las define `standards.md` (versión incorporada en `src/Prt.Core/Panel/Defaults/standards.md`). En resumen:
@@ -108,6 +120,7 @@ Cada capa puede tener:
 
 ```
 reviewers/<nombre>.md   # un revisor: reemplaza al del mismo nombre o agrega uno nuevo
+group-reviewers/<nombre>.md  # un revisor que solo corre en análisis conjuntos (ej. coordination); se lee de las capas globales
 standards.md            # reemplaza el estándar de revisión
 context.md              # se ACUMULA entre capas: dominio, arquitectura, volúmenes, qué no reportar
 review.json             # se combina propiedad por propiedad

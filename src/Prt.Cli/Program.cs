@@ -30,6 +30,7 @@ var root = new RootCommand(
     PanelCommands.Analyze(),
     PanelCommands.Report(),
     PanelCommands.Reviewers(),
+    GroupCommands.Group(),
     HistoryCommands.List(),
     HistoryCommands.Show(),
     RecordCommands.Memo(),

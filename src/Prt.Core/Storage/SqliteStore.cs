@@ -184,14 +184,17 @@ public sealed class SqliteStore : IDisposable
 
     // ---- Panel runs ----------------------------------------------------------------------
 
-    public ReviewRun StartRun(long prId, string? headCommit, DateTimeOffset? startedAt = null, string? baseBranch = null, string? baseCommit = null)
+    public ReviewRun StartRun(long prId, string? headCommit, DateTimeOffset? startedAt = null, string? baseBranch = null, string? baseCommit = null,
+        long? groupRunId = null)
     {
         var id = Scalar<long>(
             """
-            INSERT INTO review_runs (pr_id, started_at, head_commit, base_branch, base_commit) VALUES ($pr, $start, $head, $bb, $bc);
+            INSERT INTO review_runs (pr_id, started_at, head_commit, base_branch, base_commit, group_run_id)
+            VALUES ($pr, $start, $head, $bb, $bc, $group);
             SELECT last_insert_rowid();
             """,
-            ("$pr", prId), ("$start", Format(startedAt ?? Now)), ("$head", headCommit), ("$bb", baseBranch), ("$bc", baseCommit));
+            ("$pr", prId), ("$start", Format(startedAt ?? Now)), ("$head", headCommit), ("$bb", baseBranch), ("$bc", baseCommit),
+            ("$group", groupRunId));
         return Query(RunSelect + " WHERE id = $id", ReadRun, ("$id", id)).Single();
     }
 
@@ -230,6 +233,173 @@ public sealed class SqliteStore : IDisposable
              ORDER BY id DESC LIMIT 1
             """, ReadResult, ("$pr", prId), ("$reviewer", reviewer)).FirstOrDefault();
 
+    // ---- PR groups -----------------------------------------------------------------------
+
+    public PrGroup CreateGroup(string name, string description = "")
+    {
+        name = name.Trim();
+        if (name.Length == 0)
+            throw new ArgumentException("El grupo necesita un nombre.");
+        if (FindGroup(name) is not null)
+            throw new ArgumentException($"Ya existe un grupo llamado '{name}'.");
+        var now = Format(Now);
+        var id = Scalar<long>(
+            """
+            INSERT INTO pr_groups (name, description, created_at, updated_at) VALUES ($name, $desc, $now, $now);
+            SELECT last_insert_rowid();
+            """,
+            ("$name", name), ("$desc", description.Trim()), ("$now", now));
+        return GetGroup(id)!;
+    }
+
+    public PrGroup? GetGroup(long id) =>
+        Query(GroupSelect + " WHERE id = $id", ReadGroup, ("$id", id)).FirstOrDefault();
+
+    /// <summary>A group by id or by name (case-insensitive).</summary>
+    public PrGroup? FindGroup(string idOrName) =>
+        long.TryParse(idOrName.Trim(), NumberStyles.None, CultureInfo.InvariantCulture, out var id) && GetGroup(id) is { } byId
+            ? byId
+            : Query(GroupSelect + " WHERE name = $name", ReadGroup, ("$name", idOrName.Trim())).FirstOrDefault();
+
+    /// <summary>Groups, most recently updated first.</summary>
+    public IReadOnlyList<PrGroup> ListGroups() =>
+        Query(GroupSelect + " ORDER BY updated_at DESC, id DESC", ReadGroup);
+
+    public void UpdateGroup(long id, string name, string description)
+    {
+        name = name.Trim();
+        if (name.Length == 0)
+            throw new ArgumentException("El grupo necesita un nombre.");
+        if (FindGroup(name) is { } other && other.Id != id)
+            throw new ArgumentException($"Ya existe un grupo llamado '{name}'.");
+        Execute("UPDATE pr_groups SET name = $name, description = $desc, updated_at = $now WHERE id = $id",
+            ("$name", name), ("$desc", description.Trim()), ("$now", Format(Now)), ("$id", id));
+    }
+
+    /// <summary>Deletes the group and its joint analyses; the PRs and the runs derived for them stay.</summary>
+    public void DeleteGroup(long id) => Execute("DELETE FROM pr_groups WHERE id = $id", ("$id", id));
+
+    public void AddGroupMembers(long groupId, IEnumerable<long> prIds)
+    {
+        var now = Format(Now);
+        InTransaction(() =>
+        {
+            foreach (var prId in prIds)
+                Execute("INSERT OR IGNORE INTO pr_group_members (group_id, pr_id, added_at) VALUES ($g, $pr, $now)",
+                    ("$g", groupId), ("$pr", prId), ("$now", now));
+            Execute("UPDATE pr_groups SET updated_at = $now WHERE id = $g", ("$now", now), ("$g", groupId));
+        });
+    }
+
+    public void RemoveGroupMember(long groupId, long prId)
+    {
+        Execute("DELETE FROM pr_group_members WHERE group_id = $g AND pr_id = $pr", ("$g", groupId), ("$pr", prId));
+        Execute("UPDATE pr_groups SET updated_at = $now WHERE id = $g", ("$now", Format(Now)), ("$g", groupId));
+    }
+
+    /// <summary>PRs of a group, by repo and number.</summary>
+    public IReadOnlyList<PullRequest> ListGroupMembers(long groupId) =>
+        Query(PrSelect + " JOIN pr_group_members g ON g.pr_id = p.id WHERE g.group_id = $g ORDER BY lower(p.workspace), lower(p.repo), p.number",
+            ReadPr, ("$g", groupId));
+
+    public IReadOnlyList<PrGroup> GroupsOf(long prId) =>
+        Query(GroupSelect + " WHERE id IN (SELECT group_id FROM pr_group_members WHERE pr_id = $pr) ORDER BY name", ReadGroup, ("$pr", prId));
+
+    /// <summary>
+    /// Registered PRs that likely belong to the group: same source branch as a member, in a repo the group
+    /// does not cover yet, and not merged or declined.
+    /// </summary>
+    public IReadOnlyList<PullRequest> GroupSuggestions(long groupId)
+    {
+        var members = ListGroupMembers(groupId);
+        var branches = members.Select(m => m.SourceBranch).Where(b => b.Length > 0).ToHashSet(StringComparer.OrdinalIgnoreCase);
+        var repos = members.Select(m => m.Ref.RepoKey).ToHashSet(StringComparer.OrdinalIgnoreCase);
+        return ListPullRequests()
+            .Where(p => branches.Contains(p.SourceBranch) && !repos.Contains(p.Ref.RepoKey))
+            .Where(p => p.State is not ("MERGED" or "DECLINED" or "SUPERSEDED"))
+            .OrderBy(p => p.Key, StringComparer.OrdinalIgnoreCase)
+            .ToList();
+    }
+
+    public void SetGroupVerdict(long groupId, string? verdict) =>
+        Execute("UPDATE pr_groups SET verdict = COALESCE($verdict, verdict), updated_at = $now WHERE id = $id",
+            ("$verdict", verdict), ("$now", Format(Now)), ("$id", groupId));
+
+    public GroupRun StartGroupRun(long groupId, string members, DateTimeOffset? startedAt = null)
+    {
+        var id = Scalar<long>(
+            """
+            INSERT INTO group_runs (group_id, started_at, members) VALUES ($g, $start, $members);
+            SELECT last_insert_rowid();
+            """,
+            ("$g", groupId), ("$start", Format(startedAt ?? Now)), ("$members", members));
+        return Query(GroupRunSelect + " WHERE id = $id", ReadGroupRun, ("$id", id)).Single();
+    }
+
+    public void FinishGroupRun(long runId, string? verdict) =>
+        Execute("UPDATE group_runs SET ended_at = $end, verdict = $verdict WHERE id = $id",
+            ("$end", Format(Now)), ("$verdict", verdict), ("$id", runId));
+
+    public ReviewerResult AddGroupResult(ReviewerResult result)
+    {
+        result.Id = Scalar<long>(
+            """
+            INSERT INTO group_results (run_id, reviewer, agent, session_id, status, report_json, raw_output, error, started_at, ended_at)
+            VALUES ($run, $reviewer, $agent, $session, $status, $report, $raw, $error, $start, $end);
+            SELECT last_insert_rowid();
+            """,
+            ("$run", result.RunId), ("$reviewer", result.Reviewer), ("$agent", result.Agent), ("$session", result.SessionId),
+            ("$status", result.Status), ("$report", result.ReportJson), ("$raw", result.RawOutput), ("$error", result.Error),
+            ("$start", Format(result.StartedAt)), ("$end", Format(result.EndedAt)));
+        return result;
+    }
+
+    public IReadOnlyList<GroupRunHistory> ListGroupRuns(long groupId)
+    {
+        var runs = Query(GroupRunSelect + " WHERE group_id = $g ORDER BY started_at, id", ReadGroupRun, ("$g", groupId));
+        var results = Query(
+            GroupResultSelect + " WHERE run_id IN (SELECT id FROM group_runs WHERE group_id = $g) ORDER BY id",
+            ReadResult, ("$g", groupId)).ToLookup(r => r.RunId);
+        return runs.Select(r => new GroupRunHistory(r, results[r.Id].ToList())).ToList();
+    }
+
+    /// <summary>The group a derived PR run came from, if any.</summary>
+    public PrGroup? GroupOfRun(long groupRunId) =>
+        Query(GroupSelect + " WHERE id = (SELECT group_id FROM group_runs WHERE id = $run)", ReadGroup, ("$run", groupRunId)).FirstOrDefault();
+
+    public ReviewerResult? LatestOkGroupResult(long groupId, string reviewer) =>
+        Query(GroupResultSelect + """
+             WHERE reviewer = $reviewer AND status = 'ok'
+               AND run_id IN (SELECT id FROM group_runs WHERE group_id = $g)
+             ORDER BY id DESC LIMIT 1
+            """, ReadResult, ("$g", groupId), ("$reviewer", reviewer)).FirstOrDefault();
+
+    public GroupSession? GetGroupSession(long groupId, string reviewer, string agent) =>
+        Query(GroupSessionSelect + " WHERE group_id = $g AND reviewer = $reviewer AND agent = $agent ORDER BY last_used_at DESC, id DESC LIMIT 1",
+            ReadGroupSession, ("$g", groupId), ("$reviewer", reviewer), ("$agent", agent)).FirstOrDefault();
+
+    public IReadOnlyList<GroupSession> ListGroupSessions(long groupId) =>
+        Query(GroupSessionSelect + " WHERE group_id = $g ORDER BY reviewer, last_used_at DESC", ReadGroupSession, ("$g", groupId));
+
+    public GroupSession AddGroupSession(long groupId, string reviewer, string agent, string agentSessionId, string cwd, string members)
+    {
+        var now = Format(Now);
+        Execute(
+            """
+            INSERT INTO group_sessions (group_id, reviewer, agent, agent_session_id, cwd, members, started_at, last_used_at)
+            VALUES ($g, $reviewer, $agent, $sid, $cwd, $members, $now, $now)
+            ON CONFLICT (agent, agent_session_id) DO UPDATE SET
+                cwd = excluded.cwd, members = excluded.members, last_used_at = excluded.last_used_at
+            """,
+            ("$g", groupId), ("$reviewer", reviewer), ("$agent", agent), ("$sid", agentSessionId), ("$cwd", cwd),
+            ("$members", members), ("$now", now));
+        return Query(GroupSessionSelect + " WHERE agent = $agent AND agent_session_id = $sid", ReadGroupSession,
+            ("$agent", agent), ("$sid", agentSessionId)).Single();
+    }
+
+    public void TouchGroupSession(long sessionId) =>
+        Execute("UPDATE group_sessions SET last_used_at = $now WHERE id = $id", ("$now", Format(Now)), ("$id", sessionId));
+
     // ---- Tags ----------------------------------------------------------------------------
 
     public void AddTags(long prId, IEnumerable<string> tags)
@@ -253,7 +423,7 @@ public sealed class SqliteStore : IDisposable
     public PrHistory GetHistory(long prId)
     {
         var pr = GetPullRequest(prId) ?? throw new InvalidOperationException($"PR {prId} no existe.");
-        return new PrHistory(pr, ListSessions(prId), ListRounds(prId), ListMemos(prId), ListTags(prId), ListRuns(prId));
+        return new PrHistory(pr, ListSessions(prId), ListRounds(prId), ListMemos(prId), ListTags(prId), ListRuns(prId), GroupsOf(prId));
     }
 
     // ---- Maintenance ---------------------------------------------------------------------
@@ -353,7 +523,7 @@ public sealed class SqliteStore : IDisposable
         Reviewer = r.IsDBNull(9) ? null : r.GetString(9),
     };
 
-    private const string RunSelect = "SELECT id, pr_id, started_at, ended_at, head_commit, verdict, base_branch, base_commit FROM review_runs";
+    private const string RunSelect = "SELECT id, pr_id, started_at, ended_at, head_commit, verdict, base_branch, base_commit, group_run_id FROM review_runs";
 
     private static ReviewRun ReadRun(SqliteDataReader r) => new()
     {
@@ -365,7 +535,51 @@ public sealed class SqliteStore : IDisposable
         Verdict = r.IsDBNull(5) ? null : r.GetString(5),
         BaseBranch = r.IsDBNull(6) ? null : r.GetString(6),
         BaseCommit = r.IsDBNull(7) ? null : r.GetString(7),
+        GroupRunId = r.IsDBNull(8) ? null : r.GetInt64(8),
     };
+
+    private const string GroupSelect = "SELECT id, name, description, verdict, created_at, updated_at FROM pr_groups";
+
+    private static PrGroup ReadGroup(SqliteDataReader r) => new()
+    {
+        Id = r.GetInt64(0),
+        Name = r.GetString(1),
+        Description = r.GetString(2),
+        Verdict = r.IsDBNull(3) ? null : r.GetString(3),
+        CreatedAt = Parse(r.GetString(4)),
+        UpdatedAt = Parse(r.GetString(5)),
+    };
+
+    private const string GroupRunSelect = "SELECT id, group_id, started_at, ended_at, verdict, members FROM group_runs";
+
+    private static GroupRun ReadGroupRun(SqliteDataReader r) => new()
+    {
+        Id = r.GetInt64(0),
+        GroupId = r.GetInt64(1),
+        StartedAt = Parse(r.GetString(2)),
+        EndedAt = r.IsDBNull(3) ? null : Parse(r.GetString(3)),
+        Verdict = r.IsDBNull(4) ? null : r.GetString(4),
+        Members = r.GetString(5),
+    };
+
+    private const string GroupSessionSelect =
+        "SELECT id, group_id, reviewer, agent, agent_session_id, cwd, members, started_at, last_used_at FROM group_sessions";
+
+    private static GroupSession ReadGroupSession(SqliteDataReader r) => new()
+    {
+        Id = r.GetInt64(0),
+        GroupId = r.GetInt64(1),
+        Reviewer = r.GetString(2),
+        Agent = r.GetString(3),
+        AgentSessionId = r.GetString(4),
+        Cwd = r.GetString(5),
+        Members = r.GetString(6),
+        StartedAt = Parse(r.GetString(7)),
+        LastUsedAt = Parse(r.GetString(8)),
+    };
+
+    private const string GroupResultSelect =
+        "SELECT id, run_id, reviewer, agent, session_id, status, report_json, raw_output, error, started_at, ended_at FROM group_results";
 
     private const string ResultSelect =
         "SELECT id, run_id, reviewer, agent, session_id, status, report_json, raw_output, error, started_at, ended_at FROM reviewer_results";

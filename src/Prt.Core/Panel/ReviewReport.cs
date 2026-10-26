@@ -50,6 +50,9 @@ public sealed record Finding
     public Confidence Confidence { get; init; } = Confidence.Medium;
     public FindingStatus Status { get; init; } = FindingStatus.New;
 
+    /// <summary>In a joint analysis of a PR group, the PR the finding belongs to (<c>ws/repo#n</c>); null when it spans several.</summary>
+    public string? Pr { get; init; }
+
     [JsonIgnore]
     public bool IsOpen => Status != FindingStatus.Resolved;
 
@@ -78,6 +81,16 @@ public sealed record ReviewerReport
     };
 
     public string ToJson() => JsonSerializer.Serialize(this, JsonOptions);
+
+    /// <summary>
+    /// The part of a joint report that concerns one PR of the group: its own findings plus the cross-cutting ones,
+    /// with the verdict those findings force.
+    /// </summary>
+    public ReviewerReport ForPr(string prKey)
+    {
+        var findings = Findings.Where(f => f.Pr is null || string.Equals(f.Pr, prKey, StringComparison.OrdinalIgnoreCase)).ToList();
+        return this with { Findings = findings, Verdict = ReviewStandard.MinimumVerdict(findings) };
+    }
 
     public static ReviewerReport FromJson(string json) =>
         JsonSerializer.Deserialize<ReviewerReport>(json, JsonOptions)
@@ -141,6 +154,14 @@ public static class ReviewStandard
 
     public static Verdict Combine(IEnumerable<Verdict> verdicts) =>
         verdicts.DefaultIfEmpty(Verdict.Approve).Max();
+
+    /// <summary>Response format of a joint analysis: the standard one plus the PR each finding belongs to.</summary>
+    public static string GroupResponseFormat(string reviewer, string idPrefix, IReadOnlyList<string> prKeys) =>
+        ResponseFormat(reviewer, idPrefix).Replace(
+            "\"status\": \"new | still_open | resolved\"",
+            "\"status\": \"new | still_open | resolved\",\n      \"pr\": \"" + string.Join(" | ", prKeys) + " | null\"", StringComparison.Ordinal) +
+        "\n\"pr\" es el PR donde hay que hacer el cambio (exactamente uno de los listados) y \"file\" es relativo a ese repo; " +
+        "usá null solo para hallazgos transversales que exigen cambios coordinados en varios PRs.\n";
 
     /// <summary>Instructions about the response format. Fixed: the parser depends on it.</summary>
     public static string ResponseFormat(string reviewer, string idPrefix) =>

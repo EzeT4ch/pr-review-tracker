@@ -134,19 +134,15 @@ public sealed class PanelService(
 
         try
         {
-            var adapter = agents(agentName);
-            var answer = await adapter.RunReviewAsync(existing?.AgentSessionId, prompt, cwd, context.Dir, ct);
-            raw = answer.Answer;
-            session = SaveSession(pr, agentName, reviewer, existing, answer.SessionId, cwd, warnings);
-
-            var parsed = ReportParser.Parse(answer.Answer, reviewer.Name, reviewer.IdPrefix);
-            if (!parsed.Success && session is not null)
-            {
-                // One correction round inside the same session, so the agent keeps its analysis.
-                var retry = await adapter.RunReviewAsync(session.AgentSessionId, PanelPrompts.FixFormat(reviewer, parsed.Errors), cwd, context.Dir, ct);
-                raw += "\n\n---- reintento de formato ----\n\n" + retry.Answer;
-                parsed = ReportParser.Parse(retry.Answer, reviewer.Name, reviewer.IdPrefix);
-            }
+            var (parsed, answer) = await ReviewerCall.RunAsync(agents(agentName), existing?.AgentSessionId, prompt, cwd, context.Dir, null,
+                reported =>
+                {
+                    session = SaveSession(pr, agentName, reviewer, existing, reported, cwd, warnings);
+                    return session?.AgentSessionId;
+                },
+                text => ReportParser.Parse(text, reviewer.Name, reviewer.IdPrefix),
+                errors => PanelPrompts.FixFormat(reviewer, errors), ct);
+            raw = answer;
 
             warnings.AddRange(parsed.Warnings);
             report = parsed.Report;
@@ -228,5 +224,29 @@ public sealed class PanelService(
                 await File.WriteAllTextAsync(context.PreviousPath(reviewer.Name), previous, ct);
         }
         return context;
+    }
+}
+
+/// <summary>One reviewer turn: ask the agent, parse the report and, if it is out of format, ask once more in the same session.</summary>
+internal static class ReviewerCall
+{
+    /// <param name="onSession">Stores the session the agent reported and returns the id to continue it, or null if it cannot be continued.</param>
+    public static async Task<(ParseResult Parsed, string Raw)> RunAsync(IAgentAdapter adapter, string? sessionId, string prompt, string cwd,
+        string contextDir, IReadOnlyList<string>? readDirs, Func<string?, string?> onSession, Func<string, ParseResult> parse,
+        Func<IReadOnlyList<string>, string> fixFormat, CancellationToken ct)
+    {
+        var answer = await adapter.RunReviewAsync(sessionId, prompt, cwd, contextDir, ct, readDirs);
+        var raw = answer.Answer;
+        var continueId = onSession(answer.SessionId);
+
+        var parsed = parse(answer.Answer);
+        if (!parsed.Success && continueId is not null)
+        {
+            // One correction round inside the same session, so the agent keeps its analysis.
+            var retry = await adapter.RunReviewAsync(continueId, fixFormat(parsed.Errors), cwd, contextDir, ct, readDirs);
+            raw += "\n\n---- reintento de formato ----\n\n" + retry.Answer;
+            parsed = parse(retry.Answer);
+        }
+        return (parsed, raw);
     }
 }

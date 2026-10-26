@@ -111,6 +111,8 @@ internal sealed partial class Pages(WebContext context, JobRunner jobs, string t
         if (job is not null)
             sb.Append(JobBox(job));
 
+        AppendGroups(sb, h);
+
         // Actions.
         sb.Append("<div class=\"card\"><div class=\"row\">");
         sb.Append("<form method=\"post\" class=\"inline\" action=\"").Append(url).Append("/sync\">").Append(Csrf(token))
@@ -186,7 +188,7 @@ internal sealed partial class Pages(WebContext context, JobRunner jobs, string t
 
         var view = RunView.From(h.Runs[^1]);
         sb.Append("<p>").Append(VerdictBadge(view.Run.Verdict)).Append(" · ").Append(Date(view.Run.StartedAt)).Append(" · ")
-            .Append(Counts(view)).Append(" · <a href=\"").Append(url).Append("/run/").Append(view.Run.Id).Append("\">Reporte completo</a></p>");
+            .Append(Counts(view)).Append(JointLabel(view.Run)).Append(" · <a href=\"").Append(url).Append("/run/").Append(view.Run.Id).Append("\">Reporte completo</a></p>");
         AppendReviewerTable(sb, view);
         AppendFindings(sb, view, detailed: false);
         AppendQuestions(sb, view);
@@ -250,7 +252,7 @@ internal sealed partial class Pages(WebContext context, JobRunner jobs, string t
         {
             var view = RunView.From(run);
             entries.Add((run.Run.StartedAt,
-                $"<h3>{Date(run.Run.StartedAt)} — Panel de revisores · {VerdictBadge(run.Run.Verdict)}</h3>" +
+                $"<h3>{Date(run.Run.StartedAt)} — Panel de revisores · {VerdictBadge(run.Run.Verdict)}{JointLabel(run.Run)}</h3>" +
                 $"<p>{Counts(view)} {view.Reviewers.Count} revisor(es) · <a href=\"{url}/run/{run.Run.Id}\">Reporte completo</a></p>"));
         }
 
@@ -373,6 +375,9 @@ internal sealed partial class Pages(WebContext context, JobRunner jobs, string t
         var sb = new StringBuilder();
         sb.Append("<p><a href=\"").Append(url).Append("\">← ").Append(E(pr.Key)).Append(" · ").Append(E(pr.Title)).Append("</a></p>");
         sb.Append("<h1>Análisis del panel · ").Append(Date(view.Run.StartedAt)).Append("</h1>");
+        if (view.Run.GroupRunId is { } groupRunId && store.GroupOfRun(groupRunId) is { } runGroup)
+            sb.Append("<p class=\"muted\">Parte del análisis conjunto del grupo <a href=\"").Append(GroupUrl(runGroup.Id)).Append("\">")
+                .Append(E(runGroup.Name)).Append("</a>: hallazgos de este PR más los transversales.</p>");
         sb.Append("<p>").Append(VerdictBadge(view.Run.Verdict)).Append(" · ").Append(Counts(view));
         if (view.Run.HeadCommit is { Length: > 0 } head)
             sb.Append(" · head <code>").Append(E(CommitHashes.Short(head))).Append("</code>");
@@ -443,8 +448,22 @@ internal sealed partial class Pages(WebContext context, JobRunner jobs, string t
             return;
         }
 
+        // Joint analysis of a PR group: findings under the PR they belong to, then the cross-cutting ones.
+        var byPr = view.IsJoint;
+        string? currentPr = null;
+        var first = true;
+        if (byPr)
+            open = open.OrderBy(x => x.Finding.Pr is null).ThenBy(x => x.Finding.Pr, StringComparer.OrdinalIgnoreCase).ToList();
         foreach (var (reviewer, f) in open)
         {
+            if (byPr && (first || !string.Equals(currentPr, f.Pr, StringComparison.OrdinalIgnoreCase)))
+            {
+                currentPr = f.Pr;
+                sb.Append("<h3>").Append(f.Pr is { } key && PrRef.TryParse(key, out var prRef)
+                    ? $"<a href=\"{PrtWebServer.PrUrl(prRef)}\">{E(key)}</a>"
+                    : "Transversales <span class=\"muted\">(cambios coordinados en varios PRs)</span>").Append("</h3>");
+            }
+            first = false;
             sb.Append(detailed ? "<details open>" : "<details>").Append("<summary>").Append(SeverityBadge(f.Severity)).Append("<b>")
                 .Append(E(f.Id)).Append("</b> ").Append(E(f.Title)).Append(" <span class=\"muted\">· ").Append(E(reviewer));
             if (f.Location.Length > 0)
@@ -497,9 +516,12 @@ internal sealed partial class Pages(WebContext context, JobRunner jobs, string t
         {
             "analyze" => "Análisis del panel",
             "clone" => "Actualización del clon gestionado",
+            GroupJobs.Analyze => "Análisis conjunto del grupo",
+            GroupJobs.Sync => "Registro de PRs del grupo",
             _ => "Actualización desde Bitbucket",
         };
         var title = !link ? ""
+            : GroupJobs.GroupId(job.Pr) is { } groupId ? $"<a href=\"{GroupUrl(groupId)}\">grupo {groupId}</a> · "
             : job.Pr.Number == 0 ? $"<a href=\"/repos#{E(job.Pr.RepoKey)}\">{E(job.Pr.RepoKey)}</a> · "
             : $"<a href=\"{PrtWebServer.PrUrl(job.Pr)}\">{E(job.Pr.Key)}</a> · ";
         var elapsed = (int)((job.EndedAt ?? DateTimeOffset.Now) - job.StartedAt).TotalSeconds;

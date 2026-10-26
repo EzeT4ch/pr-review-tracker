@@ -61,5 +61,14 @@ public static class VaultExport
     }
 
     public static string ExportIndex(this ObsidianExporter exporter, SqliteStore store) =>
-        exporter.ExportIndex(store.ListPullRequests().Select(p => store.GetHistory(p.Id)).ToList());
+        exporter.ExportIndex(store.ListPullRequests().Select(p => store.GetHistory(p.Id)).ToList(), store.ListGroups());
+
+    /// <summary>Regenerates the note of a PR group plus the index; returns the note path.</summary>
+    public static string ExportGroup(this ObsidianExporter exporter, SqliteStore store, long groupId)
+    {
+        var group = store.GetGroup(groupId) ?? throw new ArgumentException($"El grupo {groupId} no existe.");
+        var path = exporter.ExportGroupNote(group, store.ListGroupMembers(groupId), store.ListGroupRuns(groupId));
+        exporter.ExportIndex(store);
+        return path;
+    }
 }

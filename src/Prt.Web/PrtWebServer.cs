@@ -156,6 +156,77 @@ public static class PrtWebServer
             return Redirect(http, PrUrl(prRef));
         });
 
+        app.MapGet("/groups", (HttpContext http) => Write(http, pages.Groups(null)));
+
+        app.MapPost("/groups", async Task<IResult> (HttpContext http) =>
+        {
+            var form = await http.Request.ReadFormAsync();
+            if (!TryParseRefs(form["prs"], out var refs, out var invalid))
+                return Write(http, pages.Groups($"'{invalid}' no es un PR válido. Usá la URL de Bitbucket o workspace/repo#numero."));
+            PrGroup group;
+            using (var store = context.OpenStore())
+                group = store.CreateGroup(form["name"].ToString(), form["description"].ToString());
+            AddMembers(group.Id, refs);
+            return Redirect(http, Pages.GroupUrl(group.Id));
+        });
+
+        app.MapGet("/groups/{id:long}", (HttpContext http, long id) => Write(http, pages.Group(id, null)));
+
+        app.MapGet("/groups/{id:long}/run/{runId:long}", (HttpContext http, long id, long runId) => Write(http, pages.GroupRunReport(id, runId)));
+
+        app.MapPost("/groups/{id:long}/members", async (HttpContext http, long id) =>
+        {
+            var form = await http.Request.ReadFormAsync();
+            if (long.TryParse(form["remove"], out var prId))
+            {
+                var config = context.LoadConfig();
+                using var store = context.OpenStore();
+                store.RemoveGroupMember(id, prId);
+                context.Exporter(config)?.ExportGroup(store, id);
+                context.Exporter(config)?.Export(store, prId);
+                return Redirect(http, Pages.GroupUrl(id));
+            }
+            if (!TryParseRefs(form["add"], out var refs, out var invalid))
+                return Write(http, pages.Group(id, $"'{invalid}' no es un PR válido. Usá la URL de Bitbucket o workspace/repo#numero."));
+            if (jobs.Running(GroupJobs.Ref(id)) is not null)
+                return Write(http, pages.Group(id, "Hay una tarea en curso para este grupo: agregá los PRs cuando termine."));
+            AddMembers(id, refs);
+            return Redirect(http, Pages.GroupUrl(id));
+        });
+
+        app.MapPost("/groups/{id:long}/analyze", async (HttpContext http, long id) =>
+        {
+            var form = await http.Request.ReadFormAsync();
+            var agent = form["agent"].ToString() is { Length: > 0 } a ? a : null;
+            var options = new PanelOptions(Reviewers(form), agent, form["new"] == "on", AllWhenEmpty: true);
+            jobs.Start(GroupJobs.Analyze, GroupJobs.Ref(id), job => AnalyzeGroupAsync(job, id, options));
+            return Redirect(http, Pages.GroupUrl(id));
+        });
+
+        app.MapPost("/groups/{id:long}/edit", async (HttpContext http, long id) =>
+        {
+            var form = await http.Request.ReadFormAsync();
+            var config = context.LoadConfig();
+            using var store = context.OpenStore();
+            store.UpdateGroup(id, form["name"].ToString(), form["description"].ToString());
+            context.Exporter(config)?.ExportGroup(store, id);
+            return Redirect(http, Pages.GroupUrl(id));
+        });
+
+        app.MapPost("/groups/{id:long}/delete", (HttpContext http, long id) =>
+        {
+            var config = context.LoadConfig();
+            using var store = context.OpenStore();
+            var members = store.ListGroupMembers(id);
+            store.DeleteGroup(id);
+            if (context.Exporter(config) is { } exporter)
+            {
+                foreach (var pr in members)
+                    exporter.Export(store, pr.Id);
+            }
+            return Redirect(http, "/groups");
+        });
+
         app.MapGet("/jobs", (HttpContext http) => Write(http, pages.Jobs()));
 
         app.MapGet("/reviewers", (HttpContext http) => Write(http, pages.Reviewers(null, null)));
@@ -281,6 +352,53 @@ public static class PrtWebServer
             }
         }
 
+        // Adds the registered PRs right away and registers the rest from Bitbucket in a job. True when a job was started.
+        bool AddMembers(long groupId, IReadOnlyList<PrRef> refs)
+        {
+            var config = context.LoadConfig();
+            List<PrRef> missing;
+            using (var store = context.OpenStore())
+            {
+                var known = refs.Select(r => (Ref: r, Pr: store.FindPullRequest(r))).ToList();
+                store.AddGroupMembers(groupId, known.Where(k => k.Pr is not null).Select(k => k.Pr!.Id));
+                context.Exporter(config)?.ExportGroup(store, groupId);
+                missing = known.Where(k => k.Pr is null).Select(k => k.Ref).ToList();
+            }
+            if (missing.Count == 0)
+                return false;
+
+            jobs.Start(GroupJobs.Sync, GroupJobs.Ref(groupId), async job =>
+            {
+                using var store = context.OpenStore();
+                foreach (var prRef in missing)
+                {
+                    job.Add($"{prRef.Key}: consultando Bitbucket…");
+                    var (pr, _) = await new PullRequestSync(store, context.Bitbucket(config), job).RefreshAsync(prRef);
+                    store.AddGroupMembers(groupId, [pr.Id]);
+                    job.Add($"{pr.Key}: {pr.Title} · agregado al grupo.");
+                }
+                if (context.Exporter(config) is { } exporter)
+                {
+                    foreach (var pr in store.ListGroupMembers(groupId))
+                        exporter.Export(store, pr.Id);
+                    exporter.ExportGroup(store, groupId);
+                }
+            });
+            return true;
+        }
+
+        async Task AnalyzeGroupAsync(Job job, long groupId, PanelOptions panelOptions)
+        {
+            var config = context.LoadConfig();
+            using var store = context.OpenStore();
+            var panel = new GroupPanelService(config, store, context.Bitbucket(config), name => context.Agent(config, name),
+                context.Exporter(config), job, context.RunsRoot, context.Clock, context.LoadProfile, context.GlobalProfile, context.Checkouts(config));
+            var outcome = await panel.AnalyzeAsync(groupId, panelOptions);
+            job.Add($"Veredicto del grupo: {(outcome.Verdict is { } v ? ReviewStandard.Label(v) : "sin reportes válidos")}");
+            foreach (var (key, verdict) in outcome.PrVerdicts)
+                job.Add($"{key}: {(verdict is { } pv ? ReviewStandard.Label(pv) : "sin reportes válidos")}");
+        }
+
         async Task AnalyzeAsync(Job job, PanelOptions panelOptions)
         {
             var config = context.LoadConfig();
@@ -319,6 +437,24 @@ public static class PrtWebServer
             }
         }
         return process.PrivateMemorySize64;
+    }
+
+    /// <summary>PR references separated by spaces, commas or lines; false with the first invalid one.</summary>
+    private static bool TryParseRefs(string? text, out List<PrRef> refs, out string? invalid)
+    {
+        refs = [];
+        invalid = null;
+        foreach (var part in (text ?? "").Split([' ', ',', '\n', '\r', '\t'], StringSplitOptions.RemoveEmptyEntries))
+        {
+            if (!PrRef.TryParse(part, out var prRef))
+            {
+                invalid = part;
+                return false;
+            }
+            if (!refs.Contains(prRef))
+                refs.Add(prRef);
+        }
+        return true;
     }
 
     /// <summary>Reviewers picked in the form; null when none, which runs them all.</summary>
