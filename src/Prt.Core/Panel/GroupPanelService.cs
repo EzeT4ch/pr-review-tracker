@@ -299,8 +299,9 @@ public sealed class GroupPanelService(
             var newCommits = previousHeads.TryGetValue(pr.Key, out var previousHead) && previousHead is not null
                 ? CommitHashes.Since(commits, previousHead)
                 : null;
+            var hasComments = await PanelMaterial.WriteCommentsAsync(bitbucket, pr, Path.Combine(memberDir, "comments.md"), ui, ct);
             var member = new GroupMemberContext(pr, head, newCommits, code, memberDir, hasDiff,
-                project is { Context.Length: > 0 }, project?.ContextFiles ?? []);
+                project is { Context.Length: > 0 }, project?.ContextFiles ?? [], hasComments);
             await File.WriteAllTextAsync(member.PrPath, PanelPrompts.PrFile(pr, commits), ct);
             if (member.HasProjectContext)
                 await File.WriteAllTextAsync(member.ContextPath, project!.Context, ct);

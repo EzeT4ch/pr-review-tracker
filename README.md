@@ -6,6 +6,7 @@ Herramienta de terminal para darle trazabilidad a las revisiones de Pull Request
 - Cada vez que abrís la sesión se registra una **ronda**; al salir, el agente escribe un **memo** (hallazgos, riesgos de arquitectura, impacto de negocio, pendientes, veredicto) en la misma sesión, y podés sumar tu nota.
 - Si el PR recibió commits desde la última revisión, `prt` lo detecta y le pide al agente que revise solo lo nuevo.
 - **Panel de revisores** (`prt analyze`): arquitectura, bugs, performance y seguridad corren en paralelo, cada uno en su propia sesión, y responden con un **formato de reporte estándar** que es el mismo sin importar el proveedor de IA. Los revisores, el estándar y el contexto se configuran **por proyecto**. Ver [docs/REVIEW_STANDARD.md](docs/REVIEW_STANDARD.md).
+- **Comentarios en Bitbucket desde la web**: en el diff del PR se ven los comentarios inline existentes y se puede comentar cualquier línea, responder hilos o publicar un hallazgo del panel con el texto listo para editar. Los revisores leen esos comentarios en la próxima pasada.
 - **Revisión conjunta** (`prt group`): los PRs de varios repos que implementan una misma feature se agrupan y se revisan juntos. Cada revisor ve todos los PRs en una sola sesión, un revisor de **coordinación** busca contratos rotos y problemas de despliegue entre repos, y cada PR recibe su parte de los hallazgos.
 - Todo se guarda en una base SQLite local y se **exporta a Obsidian**: una nota por PR con frontmatter, sesiones, panel, pendientes y timeline, un reporte por cada análisis y un índice.
 
@@ -147,6 +148,19 @@ La página **Repos** permite asociar un checkout local, volver al clon gestionad
 5. Consolida el veredicto (el peor), lo guarda y exporta el reporte a Obsidian.
 
 El estándar completo (severidades, veredicto, contrato JSON, estructura del reporte y personalización) está en [docs/REVIEW_STANDARD.md](docs/REVIEW_STANDARD.md).
+
+## Comentar el PR desde la web
+
+En **Ver diff** de un PR:
+
+- Los comentarios que ya tiene el PR en Bitbucket aparecen bajo su línea, con sus respuestas. Los de líneas que ya no están en el diff van arriba del archivo, y los generales en un desplegable.
+- Pasá el mouse por una línea y tocá **+** para comentarla. Las líneas borradas se comentan del lado anterior. «comentar el archivo» deja un comentario sobre el archivo, y «Responder» contesta un hilo.
+- Cada hallazgo del panel tiene **Comentar en Bitbucket**, en el diff y en la página del PR. Abre el formulario sobre su línea (o sobre el archivo, si la línea no está en el diff) con el texto armado: id, título, severidad, descripción y recomendación. Después queda marcado como *✓ comentado*.
+- Lo que publicás queda también en la timeline del PR y en su nota de Obsidian.
+
+Para comentar, el token necesita **permiso de escritura en pull requests**: con un API token de Atlassian, el scope `write:pullrequest`; con una app password, *Pull requests: Write*. Para leer alcanza el permiso de lectura de siempre. Si falta el permiso, la web lo explica y conserva el texto.
+
+En cada análisis (también en los conjuntos), prt escribe los comentarios del PR en `comments.md` y se los pasa a los revisores. Así no repiten lo ya comentado y verifican si se corrigió lo que se señaló.
 
 ## Revisión conjunta de PRs (grupos)
 

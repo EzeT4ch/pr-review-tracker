@@ -213,7 +213,8 @@ public sealed class PanelService(
             ui.Warn($"No se pudo obtener el diff del PR: {ex.Message}");
         }
 
-        var context = new RunContext(dir, hasDiff, profile.Context.Length > 0, code, profile.ContextFiles);
+        var hasComments = await PanelMaterial.WriteCommentsAsync(bitbucket, pr, Path.Combine(dir, "comments.md"), ui, ct);
+        var context = new RunContext(dir, hasDiff, profile.Context.Length > 0, code, profile.ContextFiles, hasComments);
         await File.WriteAllTextAsync(context.PrPath, PanelPrompts.PrFile(pr, commits), ct);
         if (context.HasProjectContext)
             await File.WriteAllTextAsync(context.ContextPath, profile.Context, ct);
@@ -224,6 +225,28 @@ public sealed class PanelService(
                 await File.WriteAllTextAsync(context.PreviousPath(reviewer.Name), previous, ct);
         }
         return context;
+    }
+}
+
+/// <summary>Material for the reviewers shared by the PR panel and the joint analysis.</summary>
+internal static class PanelMaterial
+{
+    /// <summary>Writes the PR's comments for the reviewers; false when there are none or they cannot be read.</summary>
+    public static async Task<bool> WriteCommentsAsync(IPullRequestSource bitbucket, PullRequest pr, string path, IStatusUi ui, CancellationToken ct)
+    {
+        try
+        {
+            var comments = await bitbucket.GetCommentsAsync(pr.Ref, ct);
+            if (comments.Count == 0)
+                return false;
+            await File.WriteAllTextAsync(path, CommentService.CommentsFile(pr, comments), ct);
+            return true;
+        }
+        catch (Exception ex) when (ex is BitbucketException or HttpRequestException)
+        {
+            ui.Warn($"{pr.Key}: no se pudieron leer los comentarios del PR ({ex.Message}); los revisores no los van a ver.");
+            return false;
+        }
     }
 }
 

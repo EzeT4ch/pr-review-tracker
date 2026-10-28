@@ -56,6 +56,29 @@ internal sealed class FakeBitbucket : IPullRequestSource
     public Task<string> GetDiffAsync(PrRef prRef, CancellationToken ct = default) =>
         Diff is null ? throw new BitbucketException("sin diff") : Task.FromResult(Diff);
 
+    /// <summary>Comments already on the PR; null makes reading them fail.</summary>
+    public List<PrComment>? Comments { get; set; } = [];
+
+    /// <summary>Comments published through prt.</summary>
+    public List<(PrRef Pr, NewComment Comment)> Posted { get; } = [];
+
+    public Task<IReadOnlyList<PrComment>> GetCommentsAsync(PrRef prRef, CancellationToken ct = default) =>
+        Comments is null ? throw new BitbucketException("sin comentarios") : Task.FromResult<IReadOnlyList<PrComment>>(Comments.ToList());
+
+    /// <summary>When set, publishing fails with this message (e.g. a read-only token).</summary>
+    public string? PostError { get; set; }
+
+    public Task<PrComment> AddCommentAsync(PrRef prRef, NewComment comment, CancellationToken ct = default)
+    {
+        if (PostError is not null)
+            throw new BitbucketException(PostError);
+        Posted.Add((prRef, comment));
+        var created = new PrComment(1000 + Posted.Count, comment.ParentId, "Vos", comment.Body, DateTimeOffset.UtcNow, comment.Path,
+            comment.OldSide ? comment.Line : null, comment.OldSide ? null : comment.Line, $"{prRef.WebUrl}#comment-{1000 + Posted.Count}");
+        Comments?.Add(created);
+        return Task.FromResult(created);
+    }
+
     public static PullRequestInfo Default(PrRef prRef) => new(
         prRef, "Agregar pagos con QR", "Implementa el flujo de cobro.", "OPEN", "Ana Pérez",
         "feature/qr", "main", "aaaaaaaaaaaa", prRef.WebUrl);

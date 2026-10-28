@@ -123,6 +123,12 @@ internal static class Html
         .diff .add{background:rgba(46,160,67,.15)}.diff .del{background:rgba(248,81,73,.15)}
         .diff .hunk td{color:var(--muted);background:var(--card);padding:4px 8px}.diff .note td{color:var(--muted)}
         .sign{display:inline-block;width:14px;color:var(--muted);user-select:none}
+        .thread{border:1px solid var(--line);border-radius:6px;background:var(--bg);padding:6px 10px;margin:6px 0;font:13px/1.5 system-ui,sans-serif;white-space:normal;word-break:normal}
+        .comment{padding:4px 0}.comment p{margin:4px 0}.comment+.comment{border-top:1px dashed var(--line)}
+        .comment-form{font:13px/1.5 system-ui,sans-serif;white-space:normal;border:1px solid var(--link);border-radius:6px;padding:8px 10px;margin:6px 0;background:var(--card)}
+        .comment-form textarea{min-height:110px;margin:6px 0}
+        a.add-c{visibility:hidden;float:left;margin-left:-6px;padding:0 4px;border-radius:4px;background:var(--link);color:#fff;font-weight:700;text-decoration:none}
+        tr:hover>td>a.add-c,a.add-c:focus{visibility:visible}
         .finding-note{font:13px/1.5 system-ui,sans-serif;white-space:normal;word-break:normal;border-left:3px solid var(--orange);background:var(--card);padding:6px 10px;margin:4px 0}
         """;
 }

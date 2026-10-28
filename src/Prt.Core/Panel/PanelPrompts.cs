@@ -11,9 +11,12 @@ public sealed record RunContext(
     bool HasDiff,
     bool HasProjectContext,
     CheckoutInfo? Checkout,
-    IReadOnlyList<string> ContextFiles)
+    IReadOnlyList<string> ContextFiles,
+    bool HasComments = false)
 {
     public bool HasCheckout => Checkout is not null;
+
+    public string CommentsPath => Path.Combine(Dir, "comments.md");
 
     public string DiffPath => Path.Combine(Dir, "diff.patch");
     public string PrPath => Path.Combine(Dir, "pr.md");
@@ -122,6 +125,8 @@ public static class PanelPrompts
             sb.Append("- Documentación del proyecto: `").Append(file).Append("` (relativo al repositorio)\n");
         if (hasPrevious)
             sb.Append("- Tus hallazgos anteriores: `").Append(context.PreviousPath(reviewer.Name)).Append("`\n");
+        if (context.HasComments)
+            sb.Append(CommentsLine(context.CommentsPath));
         if (context.Checkout is { Kind: CheckoutKind.Managed } managed)
         {
             sb.Append("- El directorio actual es el proyecto en la rama de destino `").Append(managed.BaseBranch).Append("` (commit ")
@@ -137,6 +142,11 @@ public static class PanelPrompts
         }
         sb.Append("No modifiques archivos.\n\n");
     }
+
+    /// <summary>Points the reviewer to the comments people already left on the PR.</summary>
+    internal static string CommentsLine(string path) =>
+        $"- Comentarios que ya dejaron personas en el PR: `{path}`. No repitas lo que ya está comentado; si un comentario señala " +
+        "un problema de tu foco, verificá si se corrigió y, si sigue, reportalo citando el comentario.\n";
 
     /// <summary>Keeps user-written headings below the section that embeds them.</summary>
     private static string DemoteHeadings(string markdown) => Export.MemoText.NestHeadings(markdown.Trim(), 3);

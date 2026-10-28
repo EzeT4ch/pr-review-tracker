@@ -2,6 +2,7 @@ using System.Net;
 using System.Text.Json;
 using Microsoft.AspNetCore.Builder;
 using Prt.Core.Agents;
+using Prt.Core.Bitbucket;
 using Prt.Core.Config;
 using Prt.Core.Domain;
 using Prt.Core.Panel;
@@ -185,6 +186,81 @@ public sealed class WebServerTests : IAsyncLifetime
         await Post(url + "/delete", ("csrf", Token));
         Assert.Contains("Todavía no hay grupos", await _http.GetStringAsync("/groups"));
         Assert.DoesNotContain("Parte del grupo", await _http.GetStringAsync("/pr/acme/api/42"));
+    }
+
+    [Fact]
+    public async Task Lines_are_commented_in_bitbucket_from_the_diff()
+    {
+        var at = new DateTimeOffset(2026, 3, 9, 10, 0, 0, TimeSpan.Zero);
+        _bitbucket.Diff = UnifiedDiffTests.Sample;
+        _bitbucket.Comments =
+        [
+            new PrComment(1, null, "Bruno", "¿Esto se **escapa**? <script>", at, "src/Pay.cs", null, 11, "https://bb/c1"),
+            new PrComment(2, 1, "Ana", "Sí, ahora sí.", at.AddHours(1), "src/Pay.cs", null, 11, ""),
+            new PrComment(3, null, "Bruno", "Sobre la línea vieja.", at, "src/Pay.cs", 11, null, ""),
+            new PrComment(4, null, "Bruno", "Comentario general.", at, null, null, null, ""),
+        ];
+        await Post("/track", ("csrf", Token), ("pr", "acme/api#42"), ("action", "analyze"));
+        await WaitForJob(Ref);
+
+        // Existing comments sit on their line; every line can be commented.
+        var diff = await _http.GetStringAsync("/pr/acme/api/42/diff");
+        Assert.Contains("<strong>escapa</strong>", diff);
+        Assert.Contains("&lt;script&gt;", diff);
+        Assert.Contains("Sí, ahora sí.", diff);
+        Assert.Contains("Sobre la línea vieja.", diff);
+        Assert.Contains("1 comentario(s) generales", diff);
+        Assert.Contains("?c=0-n-12#c", diff);
+        Assert.Contains("?c=0-o-11#c", diff);
+        Assert.DoesNotContain("id=\"c\"", diff);
+        var line11 = diff.IndexOf("id=\"file-0-L11\"", StringComparison.Ordinal);
+        Assert.InRange(diff.IndexOf("escapa", line11, StringComparison.Ordinal), line11, diff.IndexOf("id=\"file-0-L12\"", StringComparison.Ordinal));
+
+        var form = await _http.GetStringAsync("/pr/acme/api/42/diff?c=0-n-12");
+        Assert.Contains("id=\"c\"", form);
+        Assert.Contains("name=\"line\" value=\"12\"", form);
+
+        var posted = await Post("/pr/acme/api/42/comments", ("csrf", Token), ("path", "src/Pay.cs"), ("line", "12"), ("side", "new"),
+            ("back", "0-n-12"), ("body", "Falta loguear el id."));
+        Assert.Equal(HttpStatusCode.Redirect, posted.StatusCode);
+        Assert.EndsWith("/diff#file-0-L12", posted.Headers.Location!.ToString());
+        Assert.Equal(new NewComment("Falta loguear el id.", "src/Pay.cs", 12, false, null), _bitbucket.Posted[^1].Comment);
+        Assert.Contains("Falta loguear el id.", await _http.GetStringAsync("/pr/acme/api/42/diff"));
+
+        posted = await Post("/pr/acme/api/42/comments", ("csrf", Token), ("path", "src/Pay.cs"), ("line", "11"), ("side", "old"),
+            ("back", "0-o-11"), ("body", "¿Por qué se borra?"));
+        Assert.EndsWith("#file-0-O11", posted.Headers.Location!.ToString());
+        Assert.True(_bitbucket.Posted[^1].Comment.OldSide);
+
+        Assert.Contains("name=\"parent\" value=\"1\"", await _http.GetStringAsync("/pr/acme/api/42/diff?reply=2"));
+        posted = await Post("/pr/acme/api/42/comments", ("csrf", Token), ("parent", "1"), ("back", "reply-1"), ("body", "Gracias."));
+        Assert.Contains("#comment-", posted.Headers.Location!.ToString());
+        Assert.Equal(1, _bitbucket.Posted[^1].Comment.ParentId);
+
+        // A finding is published with its text ready to edit, and then marked as commented.
+        var page = await _http.GetStringAsync("/pr/acme/api/42");
+        Assert.Contains("/pr/acme/api/42/diff?f=SEC-1#c", page);
+        var prefilled = await _http.GetStringAsync("/pr/acme/api/42/diff?f=SEC-1");
+        Assert.Contains("**[SEC-1] Entrada sin validar**", prefilled);
+        Assert.Contains("name=\"finding\" value=\"SEC-1\"", prefilled);
+        Assert.Contains("name=\"back\" value=\"0-f\"", prefilled); // line 3 is not in the diff: the comment goes on the file
+        await Post("/pr/acme/api/42/comments", ("csrf", Token), ("path", "src/Pay.cs"), ("finding", "SEC-1"), ("back", "0-f"), ("body", "**[SEC-1]** validar"));
+        Assert.Equal(new NewComment("**[SEC-1]** validar", "src/Pay.cs", null, false, null), _bitbucket.Posted[^1].Comment);
+        page = await _http.GetStringAsync("/pr/acme/api/42");
+        Assert.Contains("✓ comentado", page);
+        Assert.Contains("Comentario en <code>src/Pay.cs:12</code>", page);
+        Assert.Contains("Respuesta en <code>PR</code>", page);
+        Assert.Contains("✓ comentado", await _http.GetStringAsync("/pr/acme/api/42/diff"));
+
+        // A failure keeps the text and explains it.
+        _bitbucket.PostError = "Bitbucket respondió 403. El token necesita permiso de escritura en pull requests.";
+        var failed = await (await Post("/pr/acme/api/42/comments", ("csrf", Token), ("path", "src/Pay.cs"), ("line", "12"), ("side", "new"),
+            ("back", "0-n-12"), ("body", "No se pierde."))).Content.ReadAsStringAsync();
+        Assert.Contains("No se pudo publicar el comentario", failed);
+        Assert.Contains(">No se pierde.</textarea>", failed);
+
+        Assert.Equal(HttpStatusCode.Forbidden,
+            (await Post("/pr/acme/api/42/comments", ("path", "src/Pay.cs"), ("body", "sin token"))).StatusCode);
     }
 
     [Fact]

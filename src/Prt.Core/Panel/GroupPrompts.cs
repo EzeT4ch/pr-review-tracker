@@ -14,8 +14,10 @@ public sealed record GroupMemberContext(
     string Dir,
     bool HasDiff,
     bool HasProjectContext,
-    IReadOnlyList<string> ContextFiles)
+    IReadOnlyList<string> ContextFiles,
+    bool HasComments = false)
 {
+    public string CommentsPath => Path.Combine(Dir, "comments.md");
     public string DiffPath => Path.Combine(Dir, "diff.patch");
     public string PrPath => Path.Combine(Dir, "pr.md");
     public string ContextPath => Path.Combine(Dir, "context.md");
@@ -131,6 +133,8 @@ public static class GroupPrompts
             sb.Append("- Descripción, metadatos y commits: `").Append(m.PrPath).Append("`\n");
             if (m.HasProjectContext)
                 sb.Append("- Contexto del proyecto (leelo antes de revisar): `").Append(m.ContextPath).Append("`\n");
+            if (m.HasComments)
+                sb.Append(PanelPrompts.CommentsLine(m.CommentsPath));
             switch (m.Checkout)
             {
                 case { Kind: CheckoutKind.Managed } managed:

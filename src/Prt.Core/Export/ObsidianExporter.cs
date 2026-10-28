@@ -337,6 +337,18 @@ public sealed partial class ObsidianExporter
         foreach (var memo in h.Memos.Where(m => m.RoundId is null || !roundIds.Contains(m.RoundId.Value)))
             entries.Add(new TimelineEntry(memo.CreatedAt, $"{Display(memo.CreatedAt)} — {MemoKinds.Label(memo.Kind)}", null, [memo]));
 
+        foreach (var comment in h.Comments)
+        {
+            var body = new StringBuilder();
+            if (comment.FindingId is not null)
+                body.Append("_Hallazgo ").Append(comment.FindingId).Append(" publicado en Bitbucket._\n\n");
+            body.Append(MarkdownText.Prose(MemoText.NestHeadings(comment.Body, 4))).Append("\n\n");
+            if (comment.Url.Length > 0)
+                body.Append("[Ver en Bitbucket](").Append(comment.Url).Append(")\n\n");
+            entries.Add(new TimelineEntry(comment.CreatedAt,
+                $"{Display(comment.CreatedAt)} — {(comment.ParentRemoteId is null ? "Comentario" : "Respuesta")} en `{comment.Location}`", null, [], body.ToString()));
+        }
+
         foreach (var run in h.Runs)
         {
             var view = RunView.From(run);

@@ -9,6 +9,7 @@ using Microsoft.AspNetCore.Http;
 using Microsoft.Extensions.DependencyInjection;
 using Microsoft.Extensions.Hosting;
 using Microsoft.Extensions.Logging;
+using Prt.Core.Bitbucket;
 using Prt.Core.Domain;
 using Prt.Core.Export;
 using Prt.Core.Panel;
@@ -40,15 +41,20 @@ public static class PrtWebServer
         });
 
         var jobs = new JobRunner();
-        var diffs = new DiffCache(context.Clock);
-        var idle = new IdleMonitor(options.SleepAfter, () => jobs.Busy, context.Clock, diffs.Clear);
+        var diffs = new PrCache<string>(context.Clock);
+        var comments = new PrCache<IReadOnlyList<PrComment>>(context.Clock);
+        var idle = new IdleMonitor(options.SleepAfter, () => jobs.Busy, context.Clock, () =>
+        {
+            diffs.Clear();
+            comments.Clear();
+        });
         builder.Services.AddSingleton(jobs);
         builder.Services.AddSingleton(idle);
         builder.Services.AddHostedService(_ => new IdleService(idle));
 
         var app = builder.Build();
         var started = DateTimeOffset.Now;
-        var pages = new Pages(context, jobs, options.Token, diffs);
+        var pages = new Pages(context, jobs, options.Token, diffs, comments);
 
         app.Use(async (http, next) =>
         {
@@ -105,7 +111,51 @@ public static class PrtWebServer
             Write(http, pages.Run(new PrRef(ws, repo, n), id)));
 
         app.MapGet("/pr/{ws}/{repo}/{n:int}/diff", async (HttpContext http, string ws, string repo, int n) =>
-            Write(http, await pages.Diff(new PrRef(ws, repo, n), http.Request.Query["refresh"] == "1")));
+        {
+            var query = http.Request.Query;
+            var request = new CommentRequest(
+                Target: query["c"].ToString() is { Length: > 0 } c ? c : null,
+                FindingId: query["f"].ToString() is { Length: > 0 } f ? f : null,
+                ReplyTo: long.TryParse(query["reply"], out var reply) ? reply : null);
+            return Write(http, await pages.Diff(new PrRef(ws, repo, n), query["refresh"] == "1", request));
+        });
+
+        app.MapPost("/pr/{ws}/{repo}/{n:int}/comments", async (HttpContext http, string ws, string repo, int n) =>
+        {
+            var prRef = new PrRef(ws, repo, n);
+            var form = await http.Request.ReadFormAsync();
+            var body = form["body"].ToString();
+            var path = form["path"].ToString() is { Length: > 0 } p ? p : null;
+            int? line = int.TryParse(form["line"], out var l) ? l : null;
+            long? parent = long.TryParse(form["parent"], out var pid) ? pid : null;
+            var oldSide = form["side"] == "old";
+            var finding = form["finding"].ToString() is { Length: > 0 } fid ? fid : null;
+            var back = form["back"].ToString();
+            var request = parent is not null
+                ? new CommentRequest(ReplyTo: parent, Draft: body)
+                : new CommentRequest(Target: back, FindingId: finding, Draft: body);
+
+            try
+            {
+                var config = context.LoadConfig();
+                PrLineComment posted;
+                using (var store = context.OpenStore())
+                {
+                    posted = await new CommentService(store, context.Bitbucket(config), context.Exporter(config))
+                        .PostAsync(prRef, new NewComment(body, path, line, oldSide, parent), finding);
+                }
+                comments.Invalidate(prRef);
+                var file = int.TryParse(back.Split('-')[0], out var index) ? index : 0;
+                var anchor = parent is not null ? $"comment-{posted.RemoteId}"
+                    : line is { } at ? Pages.LineAnchor(file, oldSide, at)
+                    : $"file-{file}";
+                return Redirect(http, PrUrl(prRef) + "/diff#" + anchor);
+            }
+            catch (Exception ex) when (ex is BitbucketException or HttpRequestException or ArgumentException)
+            {
+                return Write(http, await pages.Diff(prRef, false, request with { Error = ex.Message }));
+            }
+        });
 
         app.MapGet("/pr/{ws}/{repo}/{n:int}/run/{id:long}/diff", (HttpContext http, string ws, string repo, int n, long id) =>
             Write(http, pages.RunDiff(new PrRef(ws, repo, n), id)));

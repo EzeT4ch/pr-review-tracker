@@ -94,6 +94,33 @@ public sealed class PanelServiceTests : IDisposable
         $$"""{"id":"{{id}}","severity":"{{severity}}","title":"Hallazgo {{id}}","file":"src/Pay.cs","line":12,"description":"d","recommendation":"r","confidence":"high","status":"{{status}}"}""";
 
     [Fact]
+    public async Task Reviewers_read_the_comments_people_left_on_the_pr()
+    {
+        _bitbucket.Comments =
+        [
+            new PrComment(1, null, "Bruno", "Esto rompe con ids negativos.", new DateTimeOffset(2026, 3, 9, 10, 0, 0, TimeSpan.Zero), "src/Pay.cs", null, 12, ""),
+            new PrComment(2, 1, "Ana", "Lo arreglo.\nEn el próximo commit.", new DateTimeOffset(2026, 3, 9, 11, 0, 0, TimeSpan.Zero), "src/Pay.cs", null, 12, ""),
+            new PrComment(3, null, "Bruno", "¿Hay tests?", new DateTimeOffset(2026, 3, 9, 12, 0, 0, TimeSpan.Zero), null, null, null, ""),
+        ];
+
+        await Service().AnalyzeAsync(Ref, new PanelOptions(Reviewers: ["bugs"]));
+
+        var call = _runner.Captured.Single();
+        var contextDir = call.Args[call.Args.IndexOf("--add-dir") + 1];
+        var file = File.ReadAllText(Path.Combine(contextDir, "comments.md"));
+        Assert.Contains("## `src/Pay.cs`\n\n### Línea 12 (nueva)\n- **Bruno** (2026-03-09): Esto rompe con ids negativos.\n  - **Ana** (2026-03-09): Lo arreglo.\n    En el próximo commit.\n", file);
+        Assert.Contains("## Comentarios generales", file);
+        Assert.Contains(Path.Combine(contextDir, "comments.md"), call.Args[^1]);
+        Assert.Contains("No repitas lo que ya está comentado", call.Args[^1]);
+
+        // Without comments (or when they cannot be read) the prompt does not mention them.
+        _bitbucket.Comments = null;
+        await Service().AnalyzeAsync(Ref, new PanelOptions(Reviewers: ["bugs"], ForceNewSessions: true));
+        Assert.DoesNotContain("comments.md", _runner.Captured[^1].Args[^1]);
+        Assert.Contains(_ui.Messages, m => m.Contains("no se pudieron leer los comentarios"));
+    }
+
+    [Fact]
     public async Task Runs_every_reviewer_in_its_own_session_and_consolidates()
     {
         _answers["security"] = _ => Report("security", "request_changes", Finding("SEC-1", "major"));

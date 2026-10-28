@@ -159,6 +159,22 @@ internal static class Migrations
 
         ALTER TABLE review_runs ADD COLUMN group_run_id INTEGER REFERENCES group_runs (id) ON DELETE SET NULL;
         """,
+        """
+        CREATE TABLE pr_comments (
+            id               INTEGER PRIMARY KEY,
+            pr_id            INTEGER NOT NULL REFERENCES pull_requests (id) ON DELETE CASCADE,
+            remote_id        INTEGER NOT NULL,
+            parent_remote_id INTEGER,
+            path             TEXT,
+            line             INTEGER,
+            old_side         INTEGER NOT NULL DEFAULT 0,
+            body             TEXT NOT NULL,
+            finding_id       TEXT,
+            url              TEXT NOT NULL DEFAULT '',
+            created_at       TEXT NOT NULL
+        );
+        CREATE INDEX ix_pr_comments_pr ON pr_comments (pr_id);
+        """,
     ];
 
     public static int LatestVersion => Steps.Length;

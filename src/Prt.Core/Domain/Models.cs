@@ -144,8 +144,12 @@ public sealed record PrHistory(
     IReadOnlyList<Memo> Memos,
     IReadOnlyList<string> Tags,
     IReadOnlyList<RunHistory>? Runs = null,
-    IReadOnlyList<PrGroup>? Groups = null)
+    IReadOnlyList<PrGroup>? Groups = null,
+    IReadOnlyList<PrLineComment>? Comments = null)
 {
+    /// <summary>Comments published on Bitbucket from prt.</summary>
+    public IReadOnlyList<PrLineComment> Comments { get; } = Comments ?? [];
+
     public IReadOnlyList<RunHistory> Runs { get; } = Runs ?? [];
 
     /// <summary>PR groups this PR belongs to (features spanning several repos).</summary>
@@ -198,3 +202,30 @@ public sealed class GroupSession
 
 /// <summary>Results reuse <see cref="ReviewerResult"/>: <see cref="ReviewerResult.RunId"/> is the group run.</summary>
 public sealed record GroupRunHistory(GroupRun Run, IReadOnlyList<ReviewerResult> Results);
+
+/// <summary>A comment published on the PR in Bitbucket from prt; kept for the timeline and the note.</summary>
+public sealed class PrLineComment
+{
+    public long Id { get; set; }
+    public long PrId { get; set; }
+
+    /// <summary>Id of the comment in Bitbucket.</summary>
+    public long RemoteId { get; set; }
+
+    public long? ParentRemoteId { get; set; }
+    public string? Path { get; set; }
+    public int? Line { get; set; }
+
+    /// <summary>The line is of the old file (a removed line).</summary>
+    public bool OldSide { get; set; }
+
+    public required string Body { get; set; }
+
+    /// <summary>Panel finding the comment was published from, if any.</summary>
+    public string? FindingId { get; set; }
+
+    public string Url { get; set; } = "";
+    public DateTimeOffset CreatedAt { get; set; }
+
+    public string Location => Path is null ? "PR" : Line is { } line ? $"{Path}:{line}" : Path;
+}

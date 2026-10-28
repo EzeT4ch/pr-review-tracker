@@ -10,7 +10,8 @@ using static Prt.Web.Html;
 namespace Prt.Web;
 
 /// <summary>Server-rendered pages of the panel.</summary>
-internal sealed partial class Pages(WebContext context, JobRunner jobs, string token, DiffCache diffs)
+internal sealed partial class Pages(WebContext context, JobRunner jobs, string token, PrCache<string> diffs,
+    PrCache<IReadOnlyList<Prt.Core.Bitbucket.PrComment>> comments)
 {
     private static readonly Severity[] Severities = [Severity.Blocker, Severity.Major, Severity.Minor, Severity.Info];
 
@@ -190,7 +191,7 @@ internal sealed partial class Pages(WebContext context, JobRunner jobs, string t
         sb.Append("<p>").Append(VerdictBadge(view.Run.Verdict)).Append(" · ").Append(Date(view.Run.StartedAt)).Append(" · ")
             .Append(Counts(view)).Append(JointLabel(view.Run)).Append(" · <a href=\"").Append(url).Append("/run/").Append(view.Run.Id).Append("\">Reporte completo</a></p>");
         AppendReviewerTable(sb, view);
-        AppendFindings(sb, view, detailed: false);
+        AppendFindings(sb, view, detailed: false, url + "/diff", h.Comments.Select(c => c.FindingId).OfType<string>().ToHashSet());
         AppendQuestions(sb, view);
 
         if (h.Runs.Count > 1)
@@ -247,6 +248,18 @@ internal sealed partial class Pages(WebContext context, JobRunner jobs, string t
 
         foreach (var memo in h.Memos.Where(m => m.RoundId is null || !roundIds.Contains(m.RoundId.Value)))
             entries.Add((memo.CreatedAt, $"<h3>{Date(memo.CreatedAt)} — {E(MemoKinds.Label(memo.Kind))}</h3>{Memo(memo)}"));
+
+        foreach (var comment in h.Comments)
+        {
+            var item = new StringBuilder("<h3>").Append(Date(comment.CreatedAt)).Append(" — ")
+                .Append(comment.ParentRemoteId is null ? "Comentario" : "Respuesta").Append(" en <code>").Append(E(comment.Location)).Append("</code>");
+            if (comment.FindingId is not null)
+                item.Append(" · hallazgo ").Append(E(comment.FindingId));
+            item.Append("</h3><div class=\"memo\">").Append(Markdown(comment.Body));
+            if (comment.Url.Length > 0)
+                item.Append("<p><a href=\"").Append(E(comment.Url)).Append("\" rel=\"noreferrer\">Ver en Bitbucket</a></p>");
+            entries.Add((comment.CreatedAt, item.Append("</div>").ToString()));
+        }
 
         foreach (var run in h.Runs)
         {
@@ -438,7 +451,9 @@ internal sealed partial class Pages(WebContext context, JobRunner jobs, string t
         sb.Append("</table>");
     }
 
-    private static void AppendFindings(StringBuilder sb, RunView view, bool detailed)
+    /// <param name="diffUrl">When given, each finding with a file links to the diff to publish it as a Bitbucket comment.</param>
+    /// <param name="published">Findings already published as comments.</param>
+    private static void AppendFindings(StringBuilder sb, RunView view, bool detailed, string? diffUrl = null, IReadOnlySet<string>? published = null)
     {
         var open = view.OpenFindings.ToList();
         sb.Append("<h2>Hallazgos abiertos</h2>");
@@ -468,7 +483,12 @@ internal sealed partial class Pages(WebContext context, JobRunner jobs, string t
                 .Append(E(f.Id)).Append("</b> ").Append(E(f.Title)).Append(" <span class=\"muted\">· ").Append(E(reviewer));
             if (f.Location.Length > 0)
                 sb.Append(" · <code>").Append(E(f.Location)).Append("</code>");
+            if (published?.Contains(f.Id) == true)
+                sb.Append(" · <span class=\"v-ok\">✓ comentado</span>");
             sb.Append("</span></summary><div class=\"memo\">");
+            if (diffUrl is not null && f.File is not null && published?.Contains(f.Id) != true)
+                sb.Append("<p><a href=\"").Append(diffUrl).Append("?f=").Append(Uri.EscapeDataString(f.Id)).Append("#c\">Comentar en Bitbucket</a> ")
+                    .Append("<span class=\"muted\">(abre el diff con el texto listo para editar)</span></p>");
             sb.Append("<p class=\"muted\">");
             if (f.Category.Length > 0)
                 sb.Append("Categoría: ").Append(E(f.Category)).Append(" · ");

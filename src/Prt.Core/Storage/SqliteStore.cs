@@ -400,6 +400,40 @@ public sealed class SqliteStore : IDisposable
     public void TouchGroupSession(long sessionId) =>
         Execute("UPDATE group_sessions SET last_used_at = $now WHERE id = $id", ("$now", Format(Now)), ("$id", sessionId));
 
+    // ---- Comments ------------------------------------------------------------------------
+
+    public PrLineComment AddLineComment(PrLineComment comment)
+    {
+        comment.CreatedAt = Now;
+        comment.Id = Scalar<long>(
+            """
+            INSERT INTO pr_comments (pr_id, remote_id, parent_remote_id, path, line, old_side, body, finding_id, url, created_at)
+            VALUES ($pr, $remote, $parent, $path, $line, $old, $body, $finding, $url, $now);
+            SELECT last_insert_rowid();
+            """,
+            ("$pr", comment.PrId), ("$remote", comment.RemoteId), ("$parent", comment.ParentRemoteId), ("$path", comment.Path),
+            ("$line", comment.Line), ("$old", comment.OldSide ? 1 : 0), ("$body", comment.Body.Trim()), ("$finding", comment.FindingId),
+            ("$url", comment.Url), ("$now", Format(comment.CreatedAt)));
+        return comment;
+    }
+
+    public IReadOnlyList<PrLineComment> ListLineComments(long prId) =>
+        Query("SELECT id, pr_id, remote_id, parent_remote_id, path, line, old_side, body, finding_id, url, created_at FROM pr_comments WHERE pr_id = $pr ORDER BY created_at, id",
+            r => new PrLineComment
+            {
+                Id = r.GetInt64(0),
+                PrId = r.GetInt64(1),
+                RemoteId = r.GetInt64(2),
+                ParentRemoteId = r.IsDBNull(3) ? null : r.GetInt64(3),
+                Path = r.IsDBNull(4) ? null : r.GetString(4),
+                Line = r.IsDBNull(5) ? null : r.GetInt32(5),
+                OldSide = r.GetInt64(6) != 0,
+                Body = r.GetString(7),
+                FindingId = r.IsDBNull(8) ? null : r.GetString(8),
+                Url = r.GetString(9),
+                CreatedAt = Parse(r.GetString(10)),
+            }, ("$pr", prId));
+
     // ---- Tags ----------------------------------------------------------------------------
 
     public void AddTags(long prId, IEnumerable<string> tags)
@@ -423,7 +457,7 @@ public sealed class SqliteStore : IDisposable
     public PrHistory GetHistory(long prId)
     {
         var pr = GetPullRequest(prId) ?? throw new InvalidOperationException($"PR {prId} no existe.");
-        return new PrHistory(pr, ListSessions(prId), ListRounds(prId), ListMemos(prId), ListTags(prId), ListRuns(prId), GroupsOf(prId));
+        return new PrHistory(pr, ListSessions(prId), ListRounds(prId), ListMemos(prId), ListTags(prId), ListRuns(prId), GroupsOf(prId), ListLineComments(prId));
     }
 
     // ---- Maintenance ---------------------------------------------------------------------
@@ -476,7 +510,8 @@ public sealed class SqliteStore : IDisposable
             (SELECT MAX(x) FROM (
                 SELECT MAX(COALESCE(r.ended_at, r.started_at)) AS x FROM rounds r JOIN sessions s ON s.id = r.session_id WHERE s.pr_id = p.id
                 UNION ALL SELECT MAX(m.created_at) FROM memos m WHERE m.pr_id = p.id
-                UNION ALL SELECT MAX(COALESCE(v.ended_at, v.started_at)) FROM review_runs v WHERE v.pr_id = p.id)),
+                UNION ALL SELECT MAX(COALESCE(v.ended_at, v.started_at)) FROM review_runs v WHERE v.pr_id = p.id
+                UNION ALL SELECT MAX(c.created_at) FROM pr_comments c WHERE c.pr_id = p.id)),
             p.updated_at)
         """;
 
